@@ -25,7 +25,8 @@ import (
 	"bufio"
 	"flag"
 	"io"
-	"keeper/elog"
+	"github.com/maciekk/keeper/elog"
+	"github.com/maciekk/keeper/sfv"
 	"os"
 	"sort"
 	"strings"
@@ -39,7 +40,7 @@ func HandleCheckSfv(args []string) {
 		elog.Println("  keeper check <sfv filename>")
 		return
 	}
-	errors := SfvVerify(args[0])
+	errors := sfv.SfvVerify(args[0])
 	if len(errors) > 0 {
 		elog.Println("")
 		elog.Println("Summary of errors encountered:")
@@ -57,7 +58,7 @@ func HandleRecordSfv(args []string) {
 		elog.Println("  keeper record <src dir> <sfv filename>")
 		return
 	}
-	SfvRecord(args[0], args[1])
+	sfv.SfvRecord(args[0], args[1])
 }
 
 func HandleSnapshot(args []string) {
@@ -66,7 +67,7 @@ func HandleSnapshot(args []string) {
 		elog.Println("  keeper snapshot <src dir> <repo dir>")
 		return
 	}
-	
+
 	src, repo := args[0], args[1]
 	elog.Printf("Running 'snapshot': %s -> %s\n", src, repo)
 
@@ -100,7 +101,7 @@ func printKnownCommands() {
 func commandProcessor(chanCmd <-chan []string, chanQuit <-chan bool) {
 	for {
 		select {
-		case args := <- chanCmd:
+		case args := <-chanCmd:
 			cmd, args := args[0], args[1:]
 			handler, ok := dispatcher[cmd]
 			if !ok {
@@ -117,7 +118,7 @@ func commandProcessor(chanCmd <-chan []string, chanQuit <-chan bool) {
 
 func batchFileReader(filename string,
 	chanOut chan<- []string, chanDone chan<- bool) {
-	
+
 	f, err := os.Open(filename)
 	if err != nil {
 		elog.Fatal(err)
@@ -165,7 +166,7 @@ func main() {
 			*flagBatchFile)
 		go batchFileReader(*flagBatchFile, chanCmd, chanDone)
 		// Wait for all the batch file commands to get processed.
-		<- chanDone
+		<-chanDone
 	}
 
 	// Also process the command on commandline, if present.

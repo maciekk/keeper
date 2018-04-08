@@ -1,6 +1,6 @@
 // Routines for pretty printing numbers.
 
-package main
+package pretty
 
 import (
 	"bytes"
@@ -19,7 +19,7 @@ func Commify(v int64) string {
 		is_negative = true
 		v *= -1
 	}
-	
+
 	var chunks []int
 	for v > 0 {
 		chunks = append(chunks, int(v % 1000))

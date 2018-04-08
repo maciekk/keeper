@@ -5,7 +5,7 @@
 //   http://en.wikipedia.org/wiki/Simple_file_verification
 //
 
-package main
+package sfv
 
 import (
 	"bufio"
@@ -13,7 +13,8 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"keeper/elog"
+	"github.com/maciekk/keeper/elog"
+	"github.com/maciekk/keeper/pretty"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,7 +36,7 @@ func SfvRecord(path, sfv_filename string) bool {
 	if err != nil {
 		elog.Println("SFV file not parent directory; will use absolute paths.")
 	}
-	
+
 	// Scan directory, capturing info.
 	var sfv sfvTable
 	errors := sfv.scan(path)
@@ -90,7 +91,7 @@ func SfvVerify(sfv_filename string) (errors []string) {
 	b := NewCrc32Buffer(*flagCrcBufferSize)
 	for _, entry := range sfv.entries {
 		const max_filename_len = 68  // want full line to be < 80
-		fmt.Print(CollapseMiddle(entry.filename, max_filename_len), ": ")
+		fmt.Print(pretty.CollapseMiddle(entry.filename, max_filename_len), ": ")
 		checksum, ok := b.ComputeFileChecksum(entry.filename)
 		if !ok {
 			errors = append(errors,
@@ -201,7 +202,7 @@ func (s *sfvTable) scan(path string) (num_errors int) {
 	elog.Printf("Scanning %s...\n", path)
 	filepath.Walk(path, scan)
 	// TODO: error handling
-	
+
 	duration := time.Now().Sub(scanner.start_time)
 
 	elog.Println("")
@@ -209,7 +210,7 @@ func (s *sfvTable) scan(path string) (num_errors int) {
 	elog.Println("         dirs:", scanner.dir_count)
 	elog.Println("        files:", scanner.file_count)
 	elog.Println("        other:", scanner.other_count)
-	elog.Println("  total bytes:", HumanReadable(scanner.total_bytes, "B"))
+	elog.Println("  total bytes:", pretty.HumanReadable(scanner.total_bytes, "B"))
 	elog.Println("   total time:", duration)
 	elog.Printf(" average rate: %.1f MB/s\n",
 		float64(scanner.total_bytes) / 1024 / 1024 / duration.Seconds())
