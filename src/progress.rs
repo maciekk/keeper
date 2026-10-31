@@ -120,7 +120,13 @@ impl<'a> Progress<'a> {
         }
         let elapsed = self.started.elapsed().as_secs_f64();
         let mut line = Vec::new();
-        write!(line, "{}{}: {state}", self.scope, self.phase)?;
+        write!(
+            line,
+            "{}{}: {state}; elapsed={}",
+            self.scope,
+            self.phase,
+            crate::display::duration(elapsed)
+        )?;
         if let Some((files, bytes)) = self.totals {
             let fraction = if bytes > 0 {
                 self.bytes as f64 / bytes as f64
@@ -140,8 +146,7 @@ impl<'a> Progress<'a> {
             }
             write!(
                 line,
-                "; elapsed={}; files={}/{}; read={}/{}; {:.1} MiB/s",
-                crate::display::duration(elapsed),
+                "; files={}/{}; read={}/{}; {:.1} MiB/s",
                 crate::display::number(self.files),
                 crate::display::number(files),
                 crate::display::bytes(self.bytes),
@@ -151,8 +156,7 @@ impl<'a> Progress<'a> {
         } else {
             write!(
                 line,
-                "; elapsed={}; files={}; inventoried={}",
-                crate::display::duration(elapsed),
+                "; files={}; inventoried={}",
                 crate::display::number(self.files),
                 crate::display::bytes(self.bytes)
             )?;
@@ -313,7 +317,8 @@ mod tests {
         progress.report("running").unwrap();
         drop(progress);
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Hashing: running; 25.0%; ETA="));
+        assert!(output.contains("Hashing: running; elapsed="));
+        assert!(output.contains("; 25.0%; ETA="));
         assert!(output.contains("; [*****.....]"));
         assert!(output.find("; ETA=").unwrap() < output.find("; [").unwrap());
         assert_eq!(output.matches("; [").count(), 1);
@@ -326,7 +331,7 @@ mod tests {
         let bar = active.find("[*****.....]").unwrap();
         let elapsed = active.find("elapsed=").unwrap();
         let files = active.find("files=").unwrap();
-        assert!(percent < eta && eta < bar && bar < elapsed && elapsed < files);
+        assert!(elapsed < percent && percent < eta && eta < bar && bar < files);
         assert!(!output.contains("512.00 MiB/1.00 GiB"));
     }
 
@@ -354,7 +359,7 @@ mod tests {
     #[test]
     fn file_bar_remains_visible_without_wrapping_on_smaller_terminals() {
         let base =
-            b"Hashing: running; 5.0%; ETA=2h; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h";
+            b"Hashing: running; elapsed=1h; 5.0%; ETA=2h; files=123/1000; read=1.00 GiB/20.00 GiB";
         let suffix = b"; [*****.....]";
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(100));
@@ -368,13 +373,14 @@ mod tests {
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, None);
         assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....]; files="));
-        assert!(line.ends_with(b"elapsed=1h"));
+        assert!(line.ends_with(b"read=1.00 GiB/20.00 GiB"));
+        assert!(line.starts_with(b"Hashing: running; elapsed=1h; 5.0%"));
     }
 
     #[test]
     fn bar_and_placeholder_reserve_identical_columns() {
         let base =
-            b"Hashing: running; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB; elapsed=5m";
+            b"Hashing: running; elapsed=5m; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB";
         let bar = b"; [*****.....]";
         let mut placeholder = b"; ".to_vec();
         placeholder.resize(bar.len(), b' ');
@@ -417,7 +423,7 @@ mod tests {
 
     #[test]
     fn percentage_and_eta_precede_details_and_survive_narrow_layouts() {
-        let base = b"Left Hashing: running; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB; elapsed=5m";
+        let base = b"Left Hashing: running; elapsed=5m; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB";
         for width in [32, 40, 60, 80, 120] {
             let mut line = base.to_vec();
             fit_progress(&mut line, b"; [*****.....]", Some(width));
@@ -445,10 +451,8 @@ mod tests {
         assert!(text.starts_with("\r\x1b[2K"));
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
-        assert!(text.contains(&format!(
-            "Hashing: completed; 100.0%; {}; elapsed=",
-            " ".repeat(12)
-        )));
+        assert!(text.contains("Hashing: completed; elapsed="));
+        assert!(text.contains(&format!("; 100.0%; {}; files=", " ".repeat(12))));
         assert!(text.ends_with('\n'));
     }
 
@@ -533,7 +537,8 @@ mod tests {
         progress.finish().unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("Hashing: completed; 100.0%; elapsed="));
+        assert!(text.contains("Hashing: completed; elapsed="));
+        assert!(text.contains("; 100.0%; files="));
         assert!(text.contains("; files=1/1; read=42 B/42 B"));
         let mut output = Vec::new();
         let mut progress = Progress::new(&mut output, false);

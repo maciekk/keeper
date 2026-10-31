@@ -123,9 +123,9 @@ any progress or diagnostics; progress phases do not add another leading blank li
 
 - `--progress auto|always|never`: default `auto` enables progress only on a
   terminal. Terminal updates replace the current line; phase lines stay contiguous.
-  Hashing puts percentage and ETA immediately
-  after the phase/state. The order is percentage, ETA, per-file bar slot, elapsed
-  time, file counts, byte counts, then throughput. Preflight puts elapsed time
+  Hashing puts elapsed time immediately after the phase/state, before the
+  percentage. The order is elapsed time, percentage, ETA, per-file bar slot,
+  file counts, byte counts, then throughput. Preflight puts elapsed time
   before its counts. Percentage and ETA take priority when fitting narrow terminals, including
   within large files. ETA and elapsed time each use a single rounded figure:
   seconds below 2 minutes, minutes below 2 hours,
