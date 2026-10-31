@@ -1,5 +1,21 @@
 # Keeper v2 — Design
 
+This is the long-form architectural proposal, adapted from the original planning
+notes. It includes future features and tentative CLI names, not just implemented
+behavior. The delivery order has evolved to prioritize exact replica checks and
+resumable large-drive use before acceptance and semantic validation.
+
+For current decisions and implementation status, use:
+
+- [Design principles and compatibility commitments](principles.md)
+- [Milestone progression and readiness gates](roadmap.md)
+- [Implemented catalog format](catalog-v1.md)
+- [Replica workflow](replica-workflow.md)
+
+These focused documents take precedence over tentative proposals below. In
+particular, semantic validation belongs to content objects, but a physical scrub
+must verify each copy independently; migration must preserve existing hash knowledge.
+
 ## Purpose
 
 Keeper is a filesystem integrity tool.
@@ -1059,20 +1075,21 @@ Completed work should not be unnecessarily repeated.
 
 ---
 
-# Per-object Verification State
+# Content Validation vs Physical Verification State
 
-The system should track timestamps such as:
+Future semantic validation state belongs to the object hash plus validator identity
+and version. Rename does not invalidate that evidence; modification creates a new
+object with no applicable validation history.
 
-```text
-last_hash_verified_at
-last_semantically_validated_at
-```
+Physical hash verification is different. It must identify the dataset/replica and
+particular path or physical copy that was actually read, together with the expected
+object and verification interval. Multiple paths or drives can share an object ID
+while only one of their physical copies is corrupt. A shared per-object
+`last_hash_verified_at` must not imply that every copy was scrubbed.
 
-Validation state belongs to the object hash.
-
-Therefore rename does not invalidate validation.
-
-Modification creates a new object with no validation history.
+Verification timestamps, evidence persistence, and resume semantics are not yet
+implemented. Their catalog/cache placement and identity rules must be designed
+before age-based selection or resumability relies on them.
 
 ---
 
@@ -1427,9 +1444,19 @@ keeper-catalog-version	1
 
 Compatibility principle:
 
-> Once Keeper writes a catalog version, future Keeper versions should remain able to read it or provide a lossless conversion path.
+> Once Keeper writes a catalog version, future Keeper versions must remain able to read it or provide a validated, lossless conversion path.
 
-Where feasible, provide export into older/simple formats.
+A schema-only migration operates on metadata: preserve hashes, byte sizes,
+reversible paths, and existing authoritative evidence without rereading the dataset
+or accepting currently observed bytes. Stage and validate the output while retaining
+the original. Unknown versions must fail explicitly. Application releases, catalog
+format versions, catalog generations, and disposable checkpoint versions are
+different concepts.
+
+Where feasible, provide export into older/simple formats, without disguising a
+lossy export as a migration. See [the compatibility policy](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge).
+Migration tooling is planned, not implemented; the first two milestones share the
+same format-1 tables.
 
 ---
 
@@ -1944,10 +1971,10 @@ The full architecture can be summarized as:
                      |
                      v
 CATALOG:     path ----------> expected object
-                                  |
-                                  +--> semantic validation
-                                  |
-                                  +--> last scrub / validation
+              |                   |
+              |                   +--> semantic validation evidence
+              |
+              +--> physical scrub evidence for this dataset/copy (future)
 ```
 
 A path says:
@@ -1986,23 +2013,27 @@ easy, repeatable, inspectable, and independent of Keeper itself.
 
 # First Real-World Use Case
 
-The recovered DATA drive is an ideal initial test.
+Establish and maintain integrity evidence for a large filesystem dataset and its
+independent replicas, such as a working SSD and external HDD.
 
-Proposed workflow:
+The near-term workflow is:
 
 ```text
-1. Restore recovered files onto new DATA storage.
-2. Run semantic validation of important known formats.
-3. Create Keeper Genesis catalog.
-4. Scrub the restored corpus.
-5. Copy files to rotating backup disks.
-6. Create/compare Keeper catalogs on backups.
-7. Periodically scrub backup objects based on age.
+1. Exercise disposable samples on the actual target filesystems.
+2. Establish explicit source authority and a stable dataset scope.
+3. Independently hash both copies into genesis catalogs.
+4. Compare recorded paths, sizes, and full hashes.
+5. Investigate differences; never silently accept or repair them.
+6. Keep independent, versioned copies of the catalogs and actual data backups.
+7. Physically reread each replica later to detect drift against its baseline.
 ```
 
-This provides both:
+Resumability and target-filesystem qualification are prerequisites to the
+recommended definitive multi-hundred-GB/terabyte-scale run. Later semantic validation
+and age/budget scheduling add different evidence; they are not required merely to
+prove that two stable copies contained identical regular-file bytes.
 
-- immediate confidence in the recovered dataset
-- a realistic multi-hundred-GB / ~1-TB corpus for profiling Keeper v2
-
-The project should therefore be developed against real recovery data rather than synthetic benchmarks alone.
+Develop against representative, disposable real-data samples as well as synthetic
+benchmarks. Avoid redundant full reads when independently established catalogs
+already answer a recorded-comparison question, but never call that a fresh scrub.
+See [the staged workflow](replica-workflow.md) for concrete commands.

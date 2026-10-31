@@ -1,4 +1,34 @@
-# Milestones
+# Milestone progression and readiness gates
+
+The immediate product goal is to establish reusable checksums for a large dataset
+and its independent replicas, prove path/content agreement, then detect later drift.
+A serious daily-use tool is the aim; the first releases are deliberately conservative
+foundations, not disposable indexing experiments.
+
+## Delivery arc
+
+| Milestone | State | Outcome / exit condition |
+| --- | --- | --- |
+| Genesis and physical status | Done: `85debcc` | Inspectable canonical format, no-overwrite init, catalog self-check, read-only full-byte drift detection |
+| Replica comparison | Done: `43766e6` | Explicit recorded vs live scope, preflight, stderr progress, failure tests, format-1 compatibility fixture |
+| Resumable large-drive operation | Next | Interruptible hashing/checking with validated checkpoints; target-filesystem qualification and representative resource measurements |
+| Explicit acceptance | Planned | Review and intentionally commit changes using safe multi-generation publication; never silently rebaseline |
+| Semantic validators | Planned | Object/validator-version evidence, direct subprocess orchestration, separate validity from byte identity |
+| Rolling maintenance | Planned | Age, failure, budget, and file-count selection with durable progress and honest per-replica physical evidence |
+| Richer backup comparison | Planned | Object-presence checks across renamed/moved trees, explicitly separate from exact replica comparison |
+| Performance tuning | After correctness and measurements | Storage-aware I/O/hash/validator concurrency and traversal/checkpoint tuning |
+| Optional extensions | Deferred | Metadata history, chunk hashes, repair from known copies, scheduling integrations, signing, richer reports |
+
+The original [design stages](design.md#implementation-stages) remain useful scope
+breakdowns, not the current release order. Exact comparison and resumability were
+promoted ahead of acceptance/validators because establishing trustworthy drive
+baselines is the immediate need. Rename inference and incremental scans are useful,
+but must not delay or weaken that physical-verification path. Performance measurement
+starts early; optimization and additional concurrency follow evidence.
+
+Each milestone must preserve [the design principles](principles.md), especially
+baseline immutability, independently checkable metadata, migration without unnecessary
+rehashing, and the distinction between object evidence and checking a physical copy.
 
 ## Implemented: genesis + read-only full-byte status
 
@@ -27,7 +57,7 @@ retry, malformed catalogs, comparison scope, and refusal of symlinks/special obj
 
 ## Next: resumable large-drive operation
 
-Before the recommended definitive DATA/DATA2 run:
+Before the recommended definitive whole-drive baseline:
 
 - Handle clean cancellation and resumable initialization/verification with durable
   checkpoints. A successful physical pass must not depend on an unchecked cache.
@@ -52,6 +82,28 @@ Keep `status` as an explicit full-byte operation until an incremental `status`
 versus physical `scrub` distinction is documented and tested. Preserve format-1
 read compatibility; schema-only upgrades must not force a data rehash.
 
+### Whole-drive readiness gate
+
+Before recommending the definitive baseline run, demonstrate:
+
+1. Safe cancellation/resume and rejection or rechecking of stale/wrong-root work.
+   Do not infer fresh integrity solely from matching size/mtime metadata.
+2. Successful disposable-sample tests on each actual filesystem/mount: metadata
+   encoding, regular-file reads, locking, synchronization, no-replace publication,
+   deliberate drift, and interruption behavior.
+3. Representative large-file/small-file time and memory measurements, with bounded
+   work/resource expectations. Current smoke tests do not establish terabyte-scale
+   performance or qualification of arbitrary filesystems.
+4. Explicit corpus scope and unsupported-object policy, with no concealed omissions.
+5. Independently built catalogs that compare as intended, off-device catalog
+   preservation, and repeatable physical drift detection without modifying a baseline.
+
+Semantic validation is valuable but not required just to establish byte agreement.
+Agreement still does not prove the original bytes were healthy. Reusing recorded
+catalogs avoids an unnecessary immediate second full read; future scrubs deliberately
+pay that read cost to obtain new evidence. No elapsed-time estimate substitutes for
+these readiness checks.
+
 ## Then: explicit acceptance
 
 Do not implement baseline updates as an overwrite of `paths.tsv`.
@@ -62,16 +114,41 @@ Do not implement baseline updates as an overwrite of `paths.tsv`.
 - Revalidate observed bytes before acceptance; never promote a stale report.
 - Preserve the existing baseline on every rejected or failed acceptance.
 
-## Later: semantic validation and richer backup comparison
+## Later: semantic validation
 
 - Separate known bytes from structural validity. Invoke validators directly,
   without a shell; bound execution time and capture diagnostic output safely.
 - Add validation records keyed by full object hash plus validator/version identity.
-- Design resumable checkpoints and age/budget scheduling.
+- Cover representative image, RAW, video, archive, audio, and document formats
+  through external tools, not custom format decoders.
+
+## Then: rolling maintenance
+
+- Add `--older-than`, `--never`, `--failed`, `--budget`, and file-count selection
+  only after their evidence and resume semantics are defined.
+- Checkpoint useful completed work periodically and on clean cancellation. Bound
+  repeated work after failure without making work state the accepted baseline.
+- Prioritize never-checked, failed, or oldest evidence conservatively. State the
+  verification interval; a multi-session pass is not a simultaneous snapshot.
+
+## Later: richer backup comparison
+
 - Add object-presence backup comparison separately from path-exact replica checks.
   Do not conflate path identity, content identity and physical replica trust.
   Repair, copying, and write-through import remain separate work.
 
-The wider [design](design.md) describes these ambitions. The DATA-storage policy's
-trust-ranking and repair wishes do not expand these milestones into a backup or
-recovery engine. See [the drive workflow](replica-workflow.md) for staged testing.
+## Measured tuning and optional extensions
+
+Benchmark HDD, SATA SSD, and NVMe behavior as relevant, including many small files,
+large files, validators, and checkpoint costs. Optimize storage passes/access patterns
+before hash arithmetic; do not assume more parallel readers help an HDD.
+
+Metadata-only catalog history, chunk hashes, repair, signing, scheduling integrations,
+and richer reports remain optional follow-on work, not conditions for initial exact
+replica checks. No repair/copying feature should arrive implicitly through comparison
+or acceptance. Source trust and destructive actions need their own reviewed policy.
+
+The wider [design](design.md) describes these ambitions; [the principles](principles.md)
+record the durable commitments. Storage-policy wishes for trust ranking and recovery
+do not turn these milestones into a backup engine. See [the drive workflow](replica-workflow.md)
+for staged testing.

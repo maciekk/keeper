@@ -1,8 +1,9 @@
-# Exercising replica comparison and preparing DATA / DATA2
+# Exercising replica comparison and preparing large-drive baselines
 
+The near-term use case is a working dataset (for example, on an SSD) and an
+independent external-drive replica. Device type does not determine authority.
 This milestone enables read-only replica comparison; it is not yet a resumable
-whole-drive maintenance tool. Start with disposable copies. No commands below
-have been applied automatically to the real DATA or DATA2 drives.
+whole-drive maintenance tool. Start with disposable copies, not valuable originals.
 
 ## 1. Disposable end-to-end test
 
@@ -59,8 +60,11 @@ intended corpus root deliberately.
 
 ## 3. Definitive baseline workflow (after resumability/hardening)
 
-These are role placeholders, **not assumed mount paths**. Confirm the current
-mounts/UUIDs and decide which tree is authoritative independently of Keeper.
+Paths in these examples are placeholders, **not assumed mount paths**. Confirm
+the intended devices, stable identities, mounts, and corpus roots; decide which tree
+is authoritative independently of Keeper. Follow an explicit source-to-replica policy,
+not automatic reverse synchronization of unverified changes. See [replica authority
+and failure domains](principles.md#8-replica-authority-is-an-explicit-external-policy).
 
 1. Stop writers on both trees, or use appropriate read-only filesystem snapshots.
 2. Run `preflight` on both chosen corpus roots and resolve reported issues.
@@ -93,6 +97,9 @@ corpus memory/performance measurements yet. Those remain prerequisites to our
 recommended definitive whole-drive run. Process-kill tests are not power-loss tests.
 
 ## Metadata longevity
+
+The [compatibility commitments](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge)
+are the project-wide policy; the following describes this milestone's actual state.
 
 The three authoritative format-1 files are unchanged by this milestone. A golden
 catalog captured from foundation commit `85debcc` is read and compared in tests;
