@@ -142,7 +142,9 @@ files, regardless of flags.
 
 Comparison reports have dedicated sections: an overall assessment, inventory
 counts/sizes and delta, directory differences, optional `--long` file details,
-and final notes/issues. Warnings and legends live in the final section; incomplete
+and final notes/issues. Section headings are uppercase. Inventory rows identify
+the supplied root paths (escaped), in left/right argument order, rather than
+ambiguous side labels. Warnings and legends live in the final section; incomplete
 results are also flagged in the assessment. Terminal progress starts after one
 blank line and keeps Left/Right phase lines contiguous.
 

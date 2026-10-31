@@ -55,14 +55,19 @@ fn all_modes_summarize_immediate_directories_and_long_adds_files() {
         assert_row(&brief, "2 1 1 0 photos");
         assert_row(&brief, "1 0 0 0 photos/nested");
         assert_row(&brief, "2 0 0 1 .");
-        assert!(!brief.contains("DIRECTORY"));
+        assert!(!brief.contains("OBSERVED_DIRECTORY"));
         let assessment = brief.find("Comparison:").unwrap();
-        let inventory = brief.find("\nInventory\n").unwrap();
-        let directories = brief.find("\nDirectory differences\n").unwrap();
-        let notes = brief.find("\nNotes\n").unwrap();
+        let inventory = brief.find("\nINVENTORY\n").unwrap();
+        let directories = brief.find("\nDIRECTORY DIFFERENCES\n").unwrap();
+        let notes = brief.find("\nNOTES\n").unwrap();
         assert!(assessment < inventory && inventory < directories && directories < notes);
+        let inventory_text = &brief[inventory..directories];
+        assert!(inventory_text.contains("Root (L / R)"));
+        assert!(inventory_text.contains(left.path().to_str().unwrap()));
+        assert!(inventory_text.contains(right.path().to_str().unwrap()));
+        assert!(!inventory_text.contains("Side"));
         assert!(brief.find("File counts by direct parent").unwrap() > notes);
-        assert!(!brief.contains("File differences\n"));
+        assert!(!brief.contains("FILE DIFFERENCES\n"));
         assert!(!brief.contains("changed.jpg"));
         assert!(!brief.contains("deep.jpg"));
         assert!(!brief.contains("root-file"));
@@ -75,12 +80,32 @@ fn all_modes_summarize_immediate_directories_and_long_adds_files() {
         assert!(long.contains("DIFFERENT\tphotos/changed.jpg\t"));
         assert!(long.contains("5 only left, 1 only right, 1 different"));
         assert!(!long.contains("Individual file differences omitted"));
-        let directories = long.find("\nDirectory differences\n").unwrap();
-        let files = long.find("\nFile differences\n").unwrap();
-        let notes = long.find("\nNotes\n").unwrap();
+        let directories = long.find("\nDIRECTORY DIFFERENCES\n").unwrap();
+        let files = long.find("\nFILE DIFFERENCES\n").unwrap();
+        let notes = long.find("\nNOTES\n").unwrap();
         assert!(directories < files && files < notes);
         assert!(long.find("ONLY_LEFT\t").unwrap() > files);
     }
+}
+
+#[test]
+fn inventory_preserves_and_escapes_supplied_root_arguments() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("left\nroot")).unwrap();
+    fs::create_dir(temp.path().join("right")).unwrap();
+    let output = cargo_bin_cmd!("keeper")
+        .current_dir(temp.path())
+        .args(["compare", "--metadata-only", "./left\nroot", "./right"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let report = String::from_utf8(output).unwrap();
+    assert!(report.contains("./left\\nroot"));
+    assert!(report.contains("./right"));
+    assert!(!report.contains("left\nroot"));
+    assert!(!report.contains(temp.path().to_str().unwrap()));
 }
 
 #[test]
@@ -117,7 +142,7 @@ fn explanatory_notes_are_dim_and_plain_reports_have_no_escapes() {
     );
     assert!(!plain.contains('\x1b'));
     assert!(plain.lines().count() <= 20, "{plain}");
-    let notes = plain.find("\nNotes\n").unwrap();
+    let notes = plain.find("\nNOTES\n").unwrap();
     assert!(plain.find("Paths + sizes only").unwrap() > notes);
     assert!(plain.find("Junk =").unwrap() > notes);
     assert!(
@@ -143,7 +168,7 @@ fn incomplete_summary_retains_warnings_without_listing_files() {
     assert_eq!(brief.matches("INCOMPLETE").count(), 1);
     assert!(!brief.contains("Likely junk: all"));
     assert!(brief.starts_with("INCOMPLETE"));
-    let notes = brief.find("\nNotes / issues\n").unwrap();
+    let notes = brief.find("\nNOTES / ISSUES\n").unwrap();
     assert!(brief.find("Left ISSUE\t").unwrap() > notes);
     assert!(brief.find("Observed files only").unwrap() > notes);
     assert!(brief.find("Paths + sizes only").unwrap() > notes);
