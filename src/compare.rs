@@ -13,6 +13,7 @@ struct ReportOptions {
     color: bool,
     long: bool,
     totals: [(u64, u64); 2],
+    roots: [String; 2],
     scope: &'static str,
     issues: Vec<String>,
 }
@@ -25,6 +26,7 @@ pub fn report(
     color: bool,
     long: bool,
     live: bool,
+    roots: [String; 2],
 ) -> io::Result<bool> {
     let totals = [left, right].map(|catalog| {
         (
@@ -36,6 +38,7 @@ pub fn report(
         color,
         long,
         totals,
+        roots,
         issues: Vec::new(),
         scope: if live {
             "Scope: freshly read file bytes; no catalogs. Sequential scans, not a snapshot."
@@ -60,6 +63,7 @@ pub fn report_metadata(
     out: &mut impl Write,
     color: bool,
     long: bool,
+    roots: [String; 2],
 ) -> io::Result<u8> {
     let issues = [("Left", left), ("Right", right)]
         .into_iter()
@@ -74,6 +78,7 @@ pub fn report_metadata(
         color,
         long,
         issues,
+        roots,
         totals: [left, right].map(|inventory| (inventory.file_count(), inventory.bytes)),
         scope: "Paths + sizes only; contents unchecked. Sequential scans, not a snapshot.",
     };
@@ -134,7 +139,11 @@ impl Differences {
 }
 
 fn heading(out: &mut impl Write, text: &str, color: bool) -> io::Result<()> {
-    writeln!(out, "\n{}", display::emphasis(text, color))
+    writeln!(
+        out,
+        "\n{}",
+        display::emphasis(&text.to_ascii_uppercase(), color)
+    )
 }
 
 fn report_entries<T: PartialEq>(
@@ -195,20 +204,20 @@ fn report_entries<T: PartialEq>(
     heading(out, "Inventory", color)?;
     display::table(
         out,
-        &["Side", "Files", "Size"],
+        &["Files", "Size", "Root (L / R)"],
         &[
             vec![
-                "Left".into(),
                 number(options.totals[0].0),
                 bytes(options.totals[0].1),
+                options.roots[0].clone(),
             ],
             vec![
-                "Right".into(),
                 number(options.totals[1].0),
                 bytes(options.totals[1].1),
+                options.roots[1].clone(),
             ],
         ],
-        &[false, true, true],
+        &[true, true, false],
         color,
     )?;
     let [(left_files, left_bytes), (right_files, right_bytes)] = options.totals;

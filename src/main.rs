@@ -187,6 +187,8 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             metadata_only,
             long,
         } => {
+            let roots =
+                [&left, &right].map(|path| encoding::encode(path.as_os_str().as_encoded_bytes()));
             let left = root(&left).context("left dataset")?;
             let right = root(&right).context("right dataset")?;
             ensure!(
@@ -205,6 +207,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                     out,
                     color,
                     long,
+                    roots,
                 )?);
             }
             let (left_catalog, right_catalog) = if live {
@@ -244,6 +247,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 color,
                 long,
                 live,
+                roots,
             )?))
         }
         Command::Status { root: path, resume } => {
