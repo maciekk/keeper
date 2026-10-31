@@ -125,6 +125,26 @@ Structure operations as named subcommands. Top-level `--help` must list commands
 with their purpose and brief syntax. Provide equivalent `help`, plus focused,
 more detailed `help <command>` and nested command help.
 
+Replace repetitive progress updates on the same terminal line; never flood the
+scrollback. Keep progress on stderr, terminate its line on completion/interruption,
+and avoid terminal controls or repetitive updates in redirected logs. Report
+throughput, scope, totals, and estimated remaining time where meaningful.
+
+Use comma-separated counts through 999,999 and compact M/G/T-style suffixes above
+that. Always display byte sizes with B/KiB/MiB/GiB/etc., not raw-byte counts;
+retain exact values in authoritative metadata. Use colour and emphasis moderately
+on both progress and results to distinguish phases, completion, and values, with
+plain redirected output, `NO_COLOR`, and explicit colour overrides.
+Prefer well-organized, information-rich reports to bare statistics: expose file
+and content totals, full differing hashes, sizes, and the verification scope.
+Do not crowd unrelated information onto one line. Separate numerical summaries
+from explanatory text; use short lines, indentation, or bullet lists when they
+make richer output and multi-part caveats easier to digest. On terminals, add a
+blank line before output begins, after completed progress, and between distinct
+report sections so results do not blend into the shell command or surrounding
+text. Keep redirected reports and progress logs free of decorative padding.
+Presentation changes must not alter canonical authoritative catalog encodings.
+
 ## 7. Atomicity before convenience
 
 Never update authoritative tables piecemeal in place. Stage a complete generation,

@@ -5,12 +5,14 @@ mod cancel;
 mod catalog;
 mod checkpoint;
 mod compare;
+mod display;
 mod encoding;
 mod progress;
 mod scan;
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
+use display::{label, number};
 use progress::Progress;
 use std::{
     io::{self, IsTerminal, Write},
@@ -28,6 +30,9 @@ struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
     #[arg(long, value_enum, default_value = "auto", global = true)]
     progress: ProgressMode,
+    /// Colour and emphasis: auto uses a terminal, respecting NO_COLOR.
+    #[arg(long, value_enum, default_value = "auto", global = true)]
+    color: ProgressMode,
     #[command(subcommand)]
     command: Command,
 }
@@ -112,7 +117,7 @@ fn root(path: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8> {
+fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool) -> Result<u8> {
     match cli.command {
         Command::Init { root: path, resume } => {
             let root = root(&path)?;
@@ -126,10 +131,16 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
             if let Some(work) = work {
                 work.finish()?;
             }
-            writeln!(out, "Created catalog: {} file(s).", catalog.len())?;
             writeln!(
                 out,
-                "Baseline records current bytes, not proof of semantic validity. Keep an independent copy of .keeper/catalog/."
+                "{}: {} file(s).",
+                label("Created catalog", color),
+                number(catalog.len())
+            )?;
+            display::summary(out, "Recorded data", &catalog, color)?;
+            writeln!(
+                out,
+                "Baseline records current bytes, not proof of semantic validity.\nKeep an independent copy of .keeper/catalog/."
             )?;
             Ok(0)
         }
@@ -139,22 +150,27 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
             let catalog = catalog::load(&root(&path)?)?;
             writeln!(
                 out,
-                "Catalog OK: {} file(s). Dataset bytes were not checked.",
-                catalog.len()
+                "Catalog OK: {} file(s).\nDataset bytes were not checked.",
+                number(catalog.len())
             )?;
+            display::summary(out, "Recorded data", &catalog, color)?;
             Ok(0)
         }
         Command::Preflight { root: path } => {
             let inventory = scan::preflight(&root(&path)?, progress)?;
             for issue in &inventory.issues {
-                writeln!(out, "{issue}")?;
+                writeln!(out, "{}", display::label(issue, color))?;
+            }
+            if !inventory.issues.is_empty() {
+                display::section(out)?;
             }
             writeln!(
                 out,
-                "Preflight: {} regular file(s), {} bytes, {} issue(s). Contents not read; file readability and publication support not checked.",
-                inventory.file_count(),
-                inventory.bytes,
-                inventory.issues.len()
+                "{}: {} regular file(s), {}, {} issue(s).\nContents not read; file readability and publication support not checked.",
+                label("Preflight", color),
+                display::emphasis(&number(inventory.file_count()), color),
+                display::emphasis(&display::bytes(inventory.bytes), color),
+                display::emphasis(&number(inventory.issues.len()), color)
             )?;
             Ok(if inventory.issues.is_empty() { 0 } else { 2 })
         }
@@ -191,7 +207,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
                     .context("right dataset")?;
                 writeln!(
                     out,
-                    "Scope: freshly read file bytes; catalogs were not used. Sequential scans, not a simultaneous snapshot."
+                    "Scope: freshly read file bytes; catalogs were not used.\nSequential scans, not a simultaneous snapshot."
                 )?;
                 (left_catalog, right_catalog)
             } else {
@@ -199,14 +215,18 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
                 let right_catalog = catalog::load(&right).context("right catalog")?;
                 writeln!(
                     out,
-                    "Scope: recorded catalogs only. Current dataset bytes were NOT checked."
+                    "Scope: recorded catalogs only.\nCurrent dataset bytes were NOT checked."
                 )?;
                 (left_catalog, right_catalog)
             };
+            display::summary(out, "Left", &left_catalog, color)?;
+            display::summary(out, "Right", &right_catalog, color)?;
+            display::section(out)?;
             Ok(u8::from(compare::report(
                 &left_catalog,
                 &right_catalog,
                 out,
+                color,
             )?))
         }
         Command::Status { root: path, resume } => {
@@ -226,14 +246,18 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
                 match observed.get(path) {
                     None => {
                         missing += 1;
-                        writeln!(out, "MISSING\t{label}")?;
+                        writeln!(out, "{}\t{label}", display::label("MISSING", color))?;
                     }
                     Some(current) if entry != current => {
                         changed += 1;
                         writeln!(
                             out,
-                            "CHANGED\t{label}\texpected={}\tobserved={}",
-                            entry.hash, current.hash
+                            "{}\t{label}\texpected={}\tobserved={}\texpected_size={}\tobserved_size={}",
+                            display::label("CHANGED", color),
+                            entry.hash,
+                            current.hash,
+                            display::bytes(entry.size),
+                            display::bytes(current.size)
                         )?;
                     }
                     _ => {}
@@ -241,18 +265,25 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
             }
             for path in observed.keys().filter(|p| !expected.contains_key(*p)) {
                 added += 1;
-                writeln!(out, "ADDED\t{}", encoding::encode(path))?;
+                writeln!(out, "{}\t{}", label("ADDED", color), encoding::encode(path))?;
+            }
+            if added + missing + changed > 0 {
+                display::section(out)?;
             }
             writeln!(
                 out,
-                "{}: {} observed file(s); {added} added, {missing} missing, {changed} changed. Baseline unchanged.",
+                "{}: {} observed file(s); {} added, {} missing, {} changed.\nBaseline unchanged.",
                 if resume {
                     "Checkpointed session"
                 } else {
                     "Full-byte check"
                 },
-                observed.len()
+                number(observed.len()),
+                number(added),
+                number(missing),
+                number(changed)
             )?;
+            display::summary(out, "Observed data", &observed, color)?;
             out.flush()?;
             if let Some(work) = work {
                 work.finish()?;
@@ -273,7 +304,7 @@ fn scan_session(
         Some(work) => {
             writeln!(
                 out,
-                "Scope: checkpointed multi-invocation session {}. Earlier per-path reads may be reused; NOT a fresh full scrub. Metadata cannot detect silent corruption. Keep writers stopped throughout the session.",
+                "Scope: checkpointed multi-invocation session {}.\n  - Earlier per-path reads may be reused; NOT a fresh full scrub.\n  - Metadata cannot detect silent corruption.\n  - Keep writers stopped throughout the session.",
                 work.session
             )?;
             out.flush()?;
@@ -281,9 +312,9 @@ fn scan_session(
             let catalog = scan::hash_inventory_checkpointed(root, inventory, progress, Some(work))?;
             writeln!(
                 out,
-                "Session observations: {} file(s) reused from earlier reads; {} file(s) freshly read this invocation.",
-                work.reused,
-                catalog.len() as u64 - work.reused
+                "Session observations:\n  - {} file(s) reused from earlier reads.\n  - {} file(s) freshly read this invocation.",
+                number(work.reused),
+                number(catalog.len() as u64 - work.reused)
             )?;
             Ok(catalog)
         }
@@ -301,13 +332,36 @@ fn main() -> ExitCode {
         ProgressMode::Always => true,
         ProgressMode::Never => false,
     };
+    let color = match cli.color {
+        ProgressMode::Auto => io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        ProgressMode::Always => true,
+        ProgressMode::Never => false,
+    };
+    let progress_color = match cli.color {
+        ProgressMode::Auto => io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        ProgressMode::Always => true,
+        ProgressMode::Never => false,
+    };
     let mut err = io::stderr().lock();
-    let mut progress = Progress::new(&mut err, enabled);
+    let mut progress = Progress::new(&mut err, enabled)
+        .terminal(io::stderr().is_terminal())
+        .color(progress_color);
     let mut out = io::BufWriter::new(io::stdout().lock());
-    match run(cli, &mut out, &mut progress).and_then(|code| {
+    let result = (|| {
+        // Progress supplies its own opening space. Without terminal progress,
+        // separate the report from the invoking shell command instead.
+        if io::stdout().is_terminal() && !(enabled && io::stderr().is_terminal()) {
+            writeln!(out)?;
+        }
+        run(cli, &mut out, &mut progress, color)
+    })()
+    .and_then(|code| {
         out.flush()?;
         Ok(code)
-    }) {
+    });
+    drop(progress);
+    drop(err);
+    match result {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             eprintln!("keeper: {error:#}");

@@ -251,6 +251,72 @@ fn help_is_discoverable_equivalent_and_supports_nested_commands() {
 }
 
 #[test]
+fn presentation_is_readable_rich_and_plain_when_redirected() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("a"), vec![0; 1234]).unwrap();
+    fs::write(tmp.path().join("b"), vec![0; 1234]).unwrap();
+    let report = output(&["init"], tmp.path(), 0);
+    assert!(report.contains("2.41 KiB.\n  1 unique content object(s)"));
+    assert!(report.contains("1 unique content object(s), 1.21 KiB unique content"));
+    assert!(!report.contains('\x1b'));
+    fs::write(tmp.path().join("a"), b"changed").unwrap();
+    let colored = output(&["status", "--color", "always"], tmp.path(), 1);
+    assert!(colored.contains("\x1b[1;31mCHANGED\x1b[0m"));
+    let plain = output(&["status", "--color", "never"], tmp.path(), 1);
+    assert!(!plain.contains('\x1b'));
+    assert!(plain.contains("expected_size=1.21 KiB\tobserved_size=7 B"));
+    let result = keeper(&["status"], tmp.path())
+        .env("NO_COLOR", "1")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert!(!result.stdout.contains(&0x1b));
+}
+
+#[test]
+fn preflight_uses_units_and_colors_both_results_and_progress() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::File::create(tmp.path().join("large"))
+        .unwrap()
+        .set_len(1_234_567)
+        .unwrap();
+    let plain = keeper(
+        &["preflight", "--progress", "always", "--color", "never"],
+        tmp.path(),
+    )
+    .assert()
+    .success()
+    .get_output()
+    .clone();
+    assert!(String::from_utf8_lossy(&plain.stdout).contains(
+        "Preflight: 1 regular file(s), 1.18 MiB, 0 issue(s).\nContents not read; file readability and publication support not checked.\n"
+    ));
+    assert!(String::from_utf8_lossy(&plain.stderr).contains("inventoried=1.18 MiB"));
+    assert!(!plain.stdout.contains(&0x1b));
+    assert!(!plain.stderr.contains(&0x1b));
+    let colored = keeper(
+        &["preflight", "--progress", "always", "--color", "always"],
+        tmp.path(),
+    )
+    .assert()
+    .success()
+    .get_output()
+    .clone();
+    assert!(String::from_utf8_lossy(&colored.stdout).contains("\x1b[1;36mPreflight\x1b[0m"));
+    assert!(String::from_utf8_lossy(&colored.stdout).contains("\x1b[1m1.18 MiB\x1b[0m"));
+    assert!(String::from_utf8_lossy(&colored.stderr).contains("\x1b[1;32mPreflight: completed"));
+    let automatic = keeper(&["preflight", "--progress", "always"], tmp.path())
+        .env("NO_COLOR", "1")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert!(!automatic.stdout.contains(&0x1b));
+    assert!(!automatic.stderr.contains(&0x1b));
+}
+
+#[test]
 fn default_root_is_current_directory() {
     let tmp = tempfile::tempdir().unwrap();
     cargo_bin_cmd!("keeper")
