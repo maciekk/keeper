@@ -64,10 +64,6 @@ impl<'a> Progress<'a> {
 
     pub fn begin(&mut self, phase: &'static str, totals: Option<(u64, u64)>) -> io::Result<()> {
         crate::cancel::check()?;
-        // One leading separator per invocation, never between Left/Right phases.
-        if self.enabled && self.terminal && self.phase.is_empty() {
-            writeln!(self.out)?;
-        }
         self.phase = phase;
         self.started = Instant::now();
         self.last = self.started;
@@ -366,8 +362,8 @@ mod tests {
         progress.finish().unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert_eq!(text.matches('\n').count(), 2);
-        assert!(text.starts_with("\n\r\x1b[2K"));
+        assert_eq!(text.matches('\n').count(), 1);
+        assert!(text.starts_with("\r\x1b[2K"));
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
         assert!(text.ends_with("100.0%\n"));
@@ -400,8 +396,8 @@ mod tests {
         drop(progress);
         let text = String::from_utf8(output).unwrap();
         assert!(!text.contains("\n\n"));
-        assert_eq!(text.matches('\n').count(), 3);
-        assert!(text.starts_with("\n\r\x1b[2KLeft Preflight"));
+        assert_eq!(text.matches('\n').count(), 2);
+        assert!(text.starts_with("\r\x1b[2KLeft Preflight"));
         assert!(text.contains("\n\r\x1b[2KRight Preflight"));
     }
 

@@ -176,7 +176,7 @@ fn incomplete_summary_retains_warnings_without_listing_files() {
     assert!(brief.contains("Observed:"));
     assert_eq!(brief.matches("INCOMPLETE").count(), 1);
     assert!(!brief.contains("Likely junk: all"));
-    assert!(brief.starts_with("INCOMPLETE"));
+    assert!(brief.starts_with("\nINCOMPLETE"));
     let notes = brief.find("\nNOTES / ISSUES\n").unwrap();
     assert!(brief.find("Left ISSUE\t").unwrap() > notes);
     assert!(brief.find("Observed files only").unwrap() > notes);
