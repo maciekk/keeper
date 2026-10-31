@@ -75,8 +75,9 @@ pub fn note(out: &mut impl Write, text: &str, color: bool) -> io::Result<()> {
     writeln!(out, "{}", dim(text, color))
 }
 
-/// Compact plain-text table. Only the final column may be shortened on a TTY;
-/// redirected reports retain full values. Style after padding to preserve alignment.
+/// Compact plain-text table. Only a final left-aligned text column may be
+/// shortened on a TTY; numeric columns and preceding labels retain full values.
+/// Style after padding to preserve alignment.
 pub fn table(
     out: &mut impl Write,
     headers: &[&str],
@@ -106,12 +107,14 @@ fn table_with_width(
             *width = (*width).max(cell.chars().count());
         }
     }
-    if let (Some(columns), Some((&last, preceding))) = (columns, widths.split_last()) {
+    if let (Some(columns), Some((&last, preceding))) = (columns, widths.split_last())
+        && right_align.last() == Some(&false)
+    {
         let used = preceding.iter().sum::<usize>() + 2 * preceding.len();
         let limit = columns.saturating_sub(used + 1).max(3);
         *widths.last_mut().unwrap() = last.min(limit);
     }
-    let format_row = |cells: &[String]| {
+    let format_row = |cells: &[String], data: bool| {
         cells
             .iter()
             .enumerate()
@@ -127,21 +130,32 @@ fn table_with_width(
                 } else {
                     text.clone()
                 };
-                if right_align[index] {
+                let cell = if right_align[index] {
                     format!("{text:>width$}")
                 } else if index + 1 == cells.len() {
                     text
                 } else {
                     format!("{text:<width$}")
+                };
+                if data
+                    && color
+                    && (headers[index].starts_with("Root") || headers[index] == "Directory")
+                {
+                    format!("\x1b[36m{cell}\x1b[0m")
+                } else {
+                    cell
                 }
             })
             .collect::<Vec<_>>()
             .join("  ")
     };
-    let header = format_row(&headers.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+    let header = format_row(
+        &headers.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>(),
+        false,
+    );
     note(out, &header, color)?;
     for row in rows {
-        writeln!(out, "{}", format_row(row))?;
+        writeln!(out, "{}", format_row(row, true))?;
     }
     Ok(())
 }
@@ -252,10 +266,30 @@ mod tests {
         .unwrap();
         let narrow = String::from_utf8(narrow).unwrap();
         assert!(narrow.starts_with("\x1b[2m"));
-        assert!(narrow.contains("     1  photos/a-ver..."));
+        assert!(narrow.contains("     1  \x1b[36mphotos/a-ver..."));
         assert!(!narrow.contains("long-directory"));
         assert_eq!(dim("note", false), "note");
         assert_eq!(dim("note", true), "\x1b[2mnote\x1b[0m");
+    }
+
+    #[test]
+    fn inventory_keeps_full_roots_and_numeric_columns_on_narrow_terminals() {
+        let root = "/mnt/a-long-root-name";
+        let rows = vec![vec![root.into(), "123".into(), "1.23 TiB".into()]];
+        let mut output = Vec::new();
+        table_with_width(
+            &mut output,
+            &["Root (L / R)", "Files", "Size"],
+            &rows,
+            &[false, true, true],
+            true,
+            Some(20),
+        )
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains(&format!("\x1b[36m{root}")));
+        assert!(output.contains("123  1.23 TiB"));
+        assert!(!output.contains("..."));
     }
 
     #[test]

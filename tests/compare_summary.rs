@@ -51,10 +51,10 @@ fn all_modes_summarize_immediate_directories_and_long_adds_files() {
     }
     for mode in [&["--metadata-only"][..], &["--live"][..], &[][..]] {
         let brief = run(left.path(), right.path(), mode, false, 1);
-        assert_row(&brief, "Left-only Right-only Different Junk Directory");
-        assert_row(&brief, "2 1 1 0 photos");
-        assert_row(&brief, "1 0 0 0 photos/nested");
-        assert_row(&brief, "2 0 0 1 .");
+        assert_row(&brief, "Directory Left-only Right-only Different Junk");
+        assert_row(&brief, "photos 2 1 1 0");
+        assert_row(&brief, "photos/nested 1 0 0 0");
+        assert_row(&brief, ". 2 0 0 1");
         assert!(!brief.contains("OBSERVED_DIRECTORY"));
         let assessment = brief.find("Comparison:").unwrap();
         let inventory = brief.find("\nINVENTORY\n").unwrap();
@@ -66,6 +66,13 @@ fn all_modes_summarize_immediate_directories_and_long_adds_files() {
         assert!(inventory_text.contains(left.path().to_str().unwrap()));
         assert!(inventory_text.contains(right.path().to_str().unwrap()));
         assert!(!inventory_text.contains("Side"));
+        let rows: Vec<_> = inventory_text
+            .lines()
+            .filter(|line| line.trim_start().starts_with('/'))
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].starts_with(left.path().to_str().unwrap()));
+        assert!(rows[1].starts_with(right.path().to_str().unwrap()));
         assert!(brief.find("File counts by direct parent").unwrap() > notes);
         assert!(!brief.contains("FILE DIFFERENCES\n"));
         assert!(!brief.contains("changed.jpg"));
@@ -74,7 +81,7 @@ fn all_modes_summarize_immediate_directories_and_long_adds_files() {
         assert!(brief.contains("5 only left, 1 only right, 1 different"));
         assert!(brief.contains("Use --long"));
         let long = run(left.path(), right.path(), mode, true, 1);
-        assert_row(&long, "2 1 1 0 photos");
+        assert_row(&long, "photos 2 1 1 0");
         assert!(long.contains("ONLY_LEFT\tphotos/left-one.jpg"));
         assert!(long.contains("ONLY_RIGHT\tphotos/right-one.jpg"));
         assert!(long.contains("DIFFERENT\tphotos/changed.jpg\t"));
@@ -130,6 +137,8 @@ fn explanatory_notes_are_dim_and_plain_reports_have_no_escapes() {
         .stdout
         .clone();
     let colored = String::from_utf8(output).unwrap();
+    assert!(colored.contains(&format!("\x1b[36m{}", left.path().display())));
+    assert!(colored.contains("\x1b[36m."));
     assert!(colored.contains("\x1b[2m- Paths + sizes only"));
     assert!(colored.contains("\x1b[2m- File counts by direct parent"));
     assert!(colored.contains("\x1b[2m- Junk ="));
@@ -162,7 +171,7 @@ fn incomplete_summary_retains_warnings_without_listing_files() {
     fs::write(left.path().join(".Trash/photo.jpg"), b"abc").unwrap();
     let brief = run(left.path(), right.path(), &["--metadata-only"], false, 2);
     assert!(brief.contains("Left ISSUE\tlink\t"));
-    assert_row(&brief, "1 0 0 1 .Trash");
+    assert_row(&brief, ".Trash 1 0 0 1");
     assert!(brief.contains("Delta (R - L): -1 files, -3 B."));
     assert!(brief.contains("Observed:"));
     assert_eq!(brief.matches("INCOMPLETE").count(), 1);
@@ -193,7 +202,7 @@ fn summary_escapes_directory_names_and_omits_unchanged_directories() {
         fs::write(root.join("unchanged/a"), b"a").unwrap();
     }
     let brief = run(left.path(), right.path(), &["--metadata-only"], false, 1);
-    assert_row(&brief, "1 0 0 0 odd\\nname");
+    assert_row(&brief, "odd\\nname 1 0 0 0");
     assert!(!brief.contains("odd\nname"));
     assert!(!brief.contains("unchanged"));
     fs::remove_dir_all(left.path().join("odd\nname")).unwrap();
