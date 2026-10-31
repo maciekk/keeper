@@ -28,6 +28,10 @@ Implemented:
 - `compare LEFT RIGHT`: compare recorded path/content catalogs, not current bytes.
 - `compare --live LEFT RIGHT`: physically read both trees and compare current
   paths/content, without requiring, using, or updating catalogs.
+- `compare --metadata-only LEFT RIGHT`: compare current regular-file paths and
+  sizes without opening file contents or using catalogs. Equal sizes are not
+  evidence of equal contents. All comparison modes annotate recognized OS
+  housekeeping paths without excluding them or suppressing difference exit codes.
 - In-place progress and throughput on stderr, including within large files,
   percentage and estimated time remaining when totals are known. Use
   `--progress auto|always|never` (default: auto, enabled only on a terminal).
@@ -95,7 +99,8 @@ directories for a catalog. Roots may be explicitly chosen through a symlink; the
 resolved dataset root is used throughout.
 
 Exit codes: **0** success/no differences; **1** completed status/comparison with differences;
-**2** operational error, unsupported object, or invalid catalog. CLI usage errors
+**2** operational error, unsupported object, or invalid catalog. An incomplete metadata-only comparison is diagnostic output,
+not a successful comparison. CLI usage errors
 also return 2. File paths in catalog rows and status reports use the same escaped
 ASCII notation, so control characters cannot forge additional report lines.
 
@@ -109,6 +114,12 @@ means unchanged bytes, not successful JPEG decoding or a valid archive.
 # Compare the previously recorded catalogs. Does not examine current data bytes:
 ./target/release/keeper compare /path/to/left /path/to/right
 
+# Cheap, read-only path/size comparison. No hashing or catalog required:
+./target/release/keeper compare --metadata-only /path/to/left /path/to/right
+
+# Add individual file differences to the directory summary:
+./target/release/keeper compare --metadata-only --long /path/to/left /path/to/right
+
 # Freshly hash both trees. No catalog required or created:
 ./target/release/keeper compare --live /path/to/left /path/to/right
 
@@ -117,7 +128,50 @@ means unchanged bytes, not successful JPEG decoding or a valid archive.
   /path/to/left /path/to/right >comparison.txt 2>progress.log
 ```
 
-Reports explicitly state their scope. Differences use `ONLY_LEFT`, `ONLY_RIGHT`,
+Metadata-only comparison reports missing paths and size differences, not content
+integrity. It ignores timestamps and empty directories and uses the same preflight
+object restrictions as live comparison. It reports left/right totals and the net
+file-count and byte-size delta (right minus left). If either inventory has issues,
+it lists issues from both sides and still prints an explicitly **INCOMPLETE**
+observed-file comparison, returning exit code 2. `OBSERVED_ONLY_LEFT` and
+`OBSERVED_ONLY_RIGHT` mean a path was seen on only one side, not proven absent on
+the other. Counts, size deltas, and classification cannot establish whole-tree
+agreement or explain the full delta when paths are unreadable. Hashing operations
+still refuse incomplete inventories. No mode copies, deletes, or updates dataset
+files, regardless of flags.
+
+Comparison reports have dedicated sections: an overall assessment, inventory
+counts/sizes and delta, directory differences, optional `--long` file details,
+and final notes/issues. Warnings and legends live in the final section; incomplete
+results are also flagged in the assessment. Terminal progress starts after one
+blank line and keeps Left/Right phase lines contiguous.
+
+All comparison modes default to a directory summary: each differing file is
+counted once under its immediate parent directory (`.` for files at the root).
+An aligned table shows left-only, right-only, size/content-different, and `Junk`
+file counts, without repetitive row prefixes. `Junk` is an advisory category for
+likely unimportant housekeeping, intended to accommodate more than OS files in
+future. Current recognition rules are unchanged: only the names listed below are
+recognized. It is not a judgment of data value or permission to delete files. These are not recursive
+totals, and do not imply that empty directories or directory metadata were compared.
+On terminals, long directory names may end in `...` to fit the available width;
+redirected tables and individual file records retain full escaped paths. `--long`
+adds individual file records, including sizes/hashes where applicable. Incomplete
+reports carry a prominent warning; all counts cover observed files only, not proven
+absence. Issues remain visible regardless of `--long`. Explanatory notes and table
+headers are dimmed when colour is enabled; plain reports have no terminal escapes.
+
+All modes annotate differences beneath recognized OS housekeeping names with
+`category=OS_HOUSEKEEPING`, and summarize whether all reported differences fall in
+that category. Recognition uses exact, case-sensitive path components:
+`$RECYCLE.BIN`, `System Volume Information`, `.Trash`, `.Trash-<numeric UID>`,
+`.Trashes`, `.Spotlight-V100`, `.fseventsd`, and `.DS_Store`. This is a conservative
+name-based heuristic, not proof of origin or data value: trash can contain valuable
+user files, and unfamiliar OS files remain unclassified. Nothing is excluded, and
+these differences still return exit code 1. In metadata-only mode, “all reported
+differences” does not rule out equal-sized content changes anywhere in the trees.
+
+Reports explicitly state their scope. With `--long`, differences use `ONLY_LEFT`, `ONLY_RIGHT`,
 and `DIFFERENT` records; different files include both full hashes and sizes. Errors
 return 2, not a misleading match or a partial-success comparison. Roots must be
 distinct and non-overlapping after symlink resolution; mount aliases/bind mounts

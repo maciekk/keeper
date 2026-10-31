@@ -24,7 +24,7 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs, or freshly read both trees\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -79,17 +79,23 @@ enum Command {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
-    /// Compare recorded catalogs, or reread both trees with --live. Path-sensitive and read-only.
+    /// Compare catalogs, live bytes, or metadata only. Path-sensitive and read-only.
     #[command(
-        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
-        after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n\nExit codes: 0 matching, 1 differences, 2 operational error."
+        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. With --metadata-only, compare current regular-file paths and sizes without opening files or using catalogs; equal sizes do NOT establish content equality. Empty directories and metadata such as timestamps are not compared. By default, report implicated directories with counts of differing files grouped by immediate parent (not recursive totals); --long also lists individual file differences. Recognized OS housekeeping paths are annotated, never excluded; classification is only a name-based heuristic, not a judgment of data value. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
+        after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n  keeper compare /data/primary /mnt/backup --metadata-only\n\nExit codes: 0 matching, 1 differences, 2 operational error."
     )]
     Compare {
         left: PathBuf,
         right: PathBuf,
         /// Read all current file bytes; do not use or change catalogs. No catalog required.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "metadata_only")]
         live: bool,
+        /// Compare current file paths and sizes only; no hashing, catalogs, or writes.
+        #[arg(long)]
+        metadata_only: bool,
+        /// Add individual file differences to the default per-directory summary.
+        #[arg(long)]
+        long: bool,
     },
     /// Inspect authoritative catalog metadata.
     Catalog {
@@ -174,13 +180,33 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             )?;
             Ok(if inventory.issues.is_empty() { 0 } else { 2 })
         }
-        Command::Compare { left, right, live } => {
+        Command::Compare {
+            left,
+            right,
+            live,
+            metadata_only,
+            long,
+        } => {
             let left = root(&left).context("left dataset")?;
             let right = root(&right).context("right dataset")?;
             ensure!(
                 !left.starts_with(&right) && !right.starts_with(&left),
                 "comparison roots must be distinct and non-overlapping (including resolved symlinks)"
             );
+            if metadata_only {
+                progress.set_scope("Left ");
+                let left_inventory = scan::preflight(&left, progress).context("left preflight")?;
+                progress.set_scope("Right ");
+                let right_inventory =
+                    scan::preflight(&right, progress).context("right preflight")?;
+                return Ok(compare::report_metadata(
+                    &left_inventory,
+                    &right_inventory,
+                    out,
+                    color,
+                    long,
+                )?);
+            }
             let (left_catalog, right_catalog) = if live {
                 // Preflight BOTH before hashing either: discover avoidable late
                 // failures before spending hours reading the first drive.
@@ -205,28 +231,19 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 progress.set_scope("Right ");
                 let right_catalog = scan::hash_inventory(&right, right_inventory, progress)
                     .context("right dataset")?;
-                writeln!(
-                    out,
-                    "Scope: freshly read file bytes; catalogs were not used.\nSequential scans, not a simultaneous snapshot."
-                )?;
                 (left_catalog, right_catalog)
             } else {
                 let left_catalog = catalog::load(&left).context("left catalog")?;
                 let right_catalog = catalog::load(&right).context("right catalog")?;
-                writeln!(
-                    out,
-                    "Scope: recorded catalogs only.\nCurrent dataset bytes were NOT checked."
-                )?;
                 (left_catalog, right_catalog)
             };
-            display::summary(out, "Left", &left_catalog, color)?;
-            display::summary(out, "Right", &right_catalog, color)?;
-            display::section(out)?;
             Ok(u8::from(compare::report(
                 &left_catalog,
                 &right_catalog,
                 out,
                 color,
+                long,
+                live,
             )?))
         }
         Command::Status { root: path, resume } => {
