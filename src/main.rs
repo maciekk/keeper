@@ -345,10 +345,13 @@ fn scan_session(
     match work {
         None => scan::hash_inventory(root, inventory, progress),
         Some(work) => {
-            writeln!(
+            display::note(
                 out,
-                "Scope: checkpointed multi-invocation session {}.\n  - Earlier per-path reads may be reused; NOT a fresh full scrub.\n  - Metadata cannot detect silent corruption.\n  - Keep writers stopped throughout the session.",
-                work.session
+                &format!(
+                    "Scope: checkpointed multi-invocation session {}.\n  - Earlier per-path reads may be reused; NOT a fresh full scrub.\n  - Metadata cannot detect silent corruption.\n  - Keep writers stopped throughout the session.",
+                    work.session
+                ),
+                color,
             )?;
             out.flush()?;
             let catalog = scan::hash_inventory_checkpointed(root, inventory, progress, Some(work))?;

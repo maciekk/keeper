@@ -63,6 +63,38 @@ fn interrupt(root: &Path, operation: &str, signal: i32) -> Vec<u8> {
 }
 
 #[test]
+fn checkpoint_preamble_is_dimmed_only_when_colour_is_enabled() {
+    for color in ["always", "never"] {
+        let tmp = tempfile::tempdir().unwrap();
+        for operation in ["init", "status"] {
+            let result = cargo_bin_cmd!("keeper")
+                .args([
+                    operation,
+                    "--resume",
+                    "--color",
+                    color,
+                    "--progress",
+                    "never",
+                ])
+                .arg(tmp.path())
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let report = String::from_utf8(result).unwrap();
+            if color == "always" {
+                assert!(report.contains("\x1b[2mScope: checkpointed"));
+                assert!(report.contains("Keep writers stopped throughout the session.\x1b[0m"));
+            } else {
+                assert!(report.contains("Scope: checkpointed"));
+                assert!(!report.contains('\x1b'));
+            }
+        }
+    }
+}
+
+#[test]
 fn clean_cancellation_and_process_death_resume_init_without_replacing_baseline() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGKILL] {
         let tmp = tempfile::tempdir().unwrap();
