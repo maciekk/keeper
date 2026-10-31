@@ -158,7 +158,8 @@ fn clean_cancellation_and_process_death_resume_init_without_replacing_baseline()
         run(root, &["catalog", "check"], 0);
         run(root, &["status"], 0);
         let original = baseline(root);
-        run(root, &["init", "--resume"], 2);
+        let report = run(root, &["init", "--resume"], 0);
+        assert!(report.contains("Catalog already exists"));
         assert_eq!(original, baseline(root));
     }
 }

@@ -143,14 +143,22 @@ pub struct InitGuard {
 }
 
 impl InitGuard {
+    #[cfg(test)]
     pub fn acquire(root: &Path) -> Result<Self> {
         let guard = Self::lock(root)?;
         ensure!(
-            fs::symlink_metadata(guard.dir.join("catalog"))
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound),
-            "catalog already exists or cannot be inspected; init never overwrites a baseline"
+            !guard.catalog_exists()?,
+            "catalog already exists; init never overwrites a baseline"
         );
         Ok(guard)
+    }
+
+    pub fn catalog_exists(&self) -> Result<bool> {
+        match fs::symlink_metadata(self.dir.join("catalog")) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e).context("cannot inspect .keeper/catalog"),
+        }
     }
 
     pub fn lock(root: &Path) -> Result<Self> {

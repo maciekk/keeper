@@ -33,7 +33,10 @@ K=./target/release/keeper
 "$K" status /path/to/data         # Reread files; report added/missing/changed paths
 ```
 
-`init` never overwrites a baseline; `status` never accepts changes. A baseline
+`init` never overwrites a baseline. If a catalog already exists, it validates the
+catalog and reprints its recorded statistics without rescanning dataset bytes
+(also with `--resume`). Invalid or unreadable catalogs produce a specific error;
+use `status` to verify current bytes. `status` never accepts changes. A baseline
 records current bytes, not proof that they were good or format-valid. Back up
 `.keeper/catalog/` off-device as well as keeping independent backups of your data.
 
