@@ -1,4 +1,4 @@
-# Checkpointed operations (work format 1)
+# Checkpointed operations (work formats 1 and 2)
 
 ```sh
 keeper init --resume /path/to/dataset
@@ -31,7 +31,10 @@ snapshot. No session is an instantaneous snapshot.
 
 Every invocation repeats metadata preflight. Reuse requires the same canonical
 root path, root device/inode, operation, work-format version, and (for status) exact
-validated baseline contents. Renaming/moving the root, copying work to another
+validated baseline contents. It also requires the exact `.keeperignore` policy,
+including comments, to remain unchanged. Adding or removing the file changes scope;
+see [ignore-policy safety and recovery](ignore.md#baselines-and-resumable-sessions).
+Renaming/moving the root, copying work to another
 root, a changed baseline, or an unknown version causes refusal. Root device/inode
 are local identity checks, not a persistent filesystem UUID or hostile-clone defense;
 remount/device-number changes can require restarting.
@@ -55,8 +58,10 @@ plain init instead if fresh uninterrupted reads are required.
 Work files are `.keeper/init.work` and `.keeper/status.work`, under the same
 exclusive `.keeper/LOCK` used for initialization. A work file contains:
 
-- A checksummed header: `keeper-checkpoint`, version `1`, operation, escaped
-  canonical root, device, inode, baseline fingerprint (or `genesis`), session ID.
+- A checksummed header: `keeper-checkpoint`, version `1` for unscoped sessions or
+  `2` when `.keeperignore` exists, operation, escaped canonical root, device, inode,
+  baseline fingerprint (or `genesis`), then (for version 2) the policy's full BLAKE3
+  ID, and session ID. Version 1 retains its original encoding unchanged.
 - Append-only checksummed rows: escaped relative path, physical fingerprint
   (`dev:ino:size:mtime:mtime_nsec:ctime:ctime_nsec`), full BLAKE3 ID, byte size,
   observation completion time in Unix nanoseconds.

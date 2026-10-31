@@ -45,6 +45,10 @@ exist yet. No commands accept changed bytes, repair files, or replace a catalog.
 - `preflight`: metadata-only inventory accumulating traversal/unsupported-object
   issues without reading file contents or creating metadata. It does not guarantee
   subsequent file readability or filesystem publication support.
+- `compare --metadata-only LEFT RIGHT`: selected current paths/sizes without
+  hashing, directory summaries by default, and diagnostic incomplete inventories.
+- Explicit root [`.keeperignore` policies](ignore.md), recorded in new scoped
+  catalogs and pinned by checkpoints; mismatched comparison scopes return 2.
 - Progress and read throughput on stderr, including inside large files.
 - Deterministic tests for mutation during read, namespace changes since preflight,
   failed/short/long/interrupted reads, and process death before/after publication.
@@ -69,6 +73,7 @@ Work timestamps are **disposable session observations**, not durable verificatio
 history. Resumed results explicitly report earlier reads and never claim a fresh
 scrub. Plain `status` remains full-byte and read-only. No acceptance, live-compare
 resume, partial-file hashing, or implicit inclusion/exclusion policy was added.
+Explicit exclusions are now supported through `.keeperignore`, with recorded scope.
 See [resume semantics](resume.md) and [local measurements / qualification procedure](qualification.md).
 
 The following original milestone requirements remain the whole-drive checklist;
@@ -88,9 +93,9 @@ qualification. Before the recommended definitive whole-drive baseline:
 - Benchmark traversal, metadata inventory memory, and hashing on representative
   samples. Current inventories/catalogs are in RAM, including both trees during
   live comparison. Avoid worker tuning before measurements.
-- Decide how to select corpus scope when a drive root contains unsupported system
-  objects. No implicit exclusions, dangerous ignore defaults, or quiet partial
-  success. Roots, inclusion policy and comparison scope must remain explicit.
+- Implemented: explicit root `.keeperignore` scope for unsupported system objects,
+  without implicit exclusions, dangerous ignore defaults, or quiet partial
+  success. Target-drive qualification must still verify the chosen coverage.
 
 Keep `status` as an explicit full-byte operation until an incremental `status`
 versus physical `scrub` distinction is documented and tested. Preserve format-1

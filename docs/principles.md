@@ -72,9 +72,9 @@ Keep these version concepts separate:
 | Version/identity | Meaning |
 | --- | --- |
 | Application version | Keeper implementation release, currently a Rust v2 rewrite |
-| Catalog format version | Meaning and encoding of authoritative metadata; currently 1 |
+| Catalog format version | Meaning and encoding of authoritative metadata; 1 for unscoped catalogs, [2](catalog-v2.md) with recorded exclusions |
 | Catalog generation | An accepted state within a catalog, not a schema version; currently genesis only |
-| Cache/checkpoint version and session identity | Reconstructable per-path session work state; work format 1, see [resume.md](resume.md) |
+| Cache/checkpoint version and session identity | Reconstructable per-path session work state; work format 1 unscoped / 2 policy-pinned, see [resume.md](resume.md) |
 | Validator identity/version | Which semantic check produced which evidence; not implemented yet |
 
 Compatibility policy for future work:

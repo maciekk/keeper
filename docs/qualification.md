@@ -9,8 +9,9 @@ Keep originals and independent backups. Use only disposable samples here.
 1. Choose a dedicated disposable directory on the intended filesystem. Record
    `findmnt -T /chosen/directory`, kernel, device type, mount options, free space,
    Keeper revision and `rustc --version`. Choose explicit corpus roots: unsupported
-   system objects are errors, not implicit exclusions. No include/ignore policy
-   has been added; use separate roots for separately chosen datasets.
+   system objects are errors, not implicit exclusions. Choose any explicit
+   [`.keeperignore`](ignore.md) policy before starting scans; qualifying selected
+   data does not verify excluded subtrees.
 2. Run the tests with temporary files **on that mount**:
 
    ```sh
