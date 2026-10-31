@@ -39,6 +39,22 @@ an added path. Comparison is deliberately path-sensitive: identical bytes elsewh
 do not establish an exact replica. Format 1 is unchanged from the foundation;
 existing catalogs require no conversion or reindexing.
 
+## Why Rust?
+
+Keeper is intentionally both a useful integrity tool and a **learn-Rust project**.
+Rust also fits the job on practical grounds:
+
+- Systems-level control, strong filesystem APIs, and low runtime overhead.
+- Excellent BLAKE3 support for large-data hashing.
+- Explicit control of concurrency and resource use, including different HDD/SSD needs.
+- Strong support for directly invoking external semantic validators without a shell.
+- Distribution as a single executable rather than an application runtime stack.
+
+Prefer a straightforward synchronous pipeline with controlled worker pools. Do not
+introduce async or other machinery just to learn it; require measured need. Rust is
+not a substitute for a correct filesystem protocol, failure testing, or independent
+backups. See [the design principles](docs/principles.md) for those commitments.
+
 ## Build and try
 
 Requires Linux and a recent stable Rust toolchain (edition 2024). Run from this
@@ -93,7 +109,7 @@ are not fully detected, so choose genuinely separate datasets.
 not as a simultaneous filesystem snapshot. Catalog comparison says only what was
 recorded, not what is still present. Neither command changes or accepts baselines.
 
-See [the drive workflow](docs/replica-workflow.md) for a staged DATA/DATA2 test and
+See [the drive workflow](docs/replica-workflow.md) for a staged working-copy/replica test and
 baseline procedure, plus remaining prerequisites for the definitive whole-drive run.
 
 ## Scope and safety
@@ -135,8 +151,13 @@ is not an independent backup or a cryptographic trust anchor.
 
 ## Documentation
 
+- [Design principles, metadata longevity, and migration policy](docs/principles.md)
 - [Catalog format and manual inspection](docs/catalog-v1.md)
 - [Replica/drive workflow](docs/replica-workflow.md)
 - [Next milestones and unresolved decisions](docs/roadmap.md)
-- [Original design](docs/design.md), imported from the Obsidian note. This is the
-  long-term direction, not a claim that all described functionality exists.
+- [Long-form design](docs/design.md), adapted from the original planning notes.
+  This is the architectural direction, not a claim that all proposed features exist.
+
+The roadmap captures the full delivery arc and whole-drive readiness gates. The
+principles document records compatibility commitments separately from currently
+implemented capabilities; migration tooling, for example, is not implemented yet.
