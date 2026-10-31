@@ -174,16 +174,12 @@ impl<'a> Progress<'a> {
             let filled = (fraction * 10.0).floor() as usize;
             write!(
                 suffix,
-                "; file [{}{}] {:.1}% {}/{}",
-                "=".repeat(filled),
-                "-".repeat(10 - filled),
-                fraction * 100.0,
-                crate::display::bytes(file.read),
-                crate::display::bytes(file.size)
+                "; [{}{}]",
+                "*".repeat(filled),
+                ".".repeat(10 - filled)
             )?;
         }
-        // Keep the suffix at the end. On narrower terminals shorten the overall
-        // line first, rather than letting its prefix push the file bar offscreen.
+        // Fit plain ASCII before styling; ETA is protected from truncation.
         fit_progress(
             &mut line,
             &suffix,
@@ -217,15 +213,32 @@ fn terminal_columns() -> Option<usize> {
 }
 
 fn fit_progress(line: &mut Vec<u8>, suffix: &[u8], columns: Option<usize>) {
-    match columns {
-        // Very narrow terminals retain the existing compact overall progress.
-        Some(columns) if columns < suffix.len() + 24 => fit_line(line, columns),
-        Some(columns) => {
-            fit_line(line, columns - suffix.len());
-            line.extend_from_slice(suffix);
-        }
-        None => line.extend_from_slice(suffix),
+    let Some(columns) = columns else {
+        line.extend_from_slice(suffix);
+        return;
+    };
+    let limit = columns.saturating_sub(1);
+    let eta = line
+        .windows(6)
+        .rposition(|part| part == b"; ETA=")
+        .map(|index| line.split_off(index))
+        .unwrap_or_default();
+    // Retain a little context before the ETA/bar. Drop the bar first if needed.
+    let suffix = if eta.len() + suffix.len() + 24 <= limit {
+        suffix
+    } else {
+        &[]
+    };
+    if !eta.is_empty() && eta.len() >= limit {
+        // A full ETA cannot physically fit in a smaller terminal. Prefer the
+        // complete value to an ellipsis, even if this pathological case wraps.
+        line.clear();
+        line.extend_from_slice(&eta[2..]);
+        return;
     }
+    fit_line(line, limit.saturating_sub(eta.len() + suffix.len()) + 1);
+    line.extend_from_slice(&eta);
+    line.extend_from_slice(suffix);
 }
 
 fn fit_line(line: &mut Vec<u8>, columns: usize) {
@@ -279,9 +292,10 @@ mod tests {
         progress.report("running").unwrap();
         drop(progress);
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("; file [=====-----] 50.0% 512.00 MiB/1.00 GiB"));
-        assert!(output.find("; ETA=").unwrap() < output.find("; file [").unwrap());
-        assert_eq!(output.matches("; file [").count(), 1);
+        assert!(output.contains("; [*****.....]"));
+        assert!(output.find("; ETA=").unwrap() < output.find("; [").unwrap());
+        assert_eq!(output.matches("; [").count(), 1);
+        assert!(!output.contains("512.00 MiB/1.00 GiB"));
     }
 
     #[test]
@@ -297,7 +311,7 @@ mod tests {
             progress.finish().unwrap();
             assert!(progress.current_file.is_none());
             drop(progress);
-            assert!(!String::from_utf8(output).unwrap().contains("; file ["));
+            assert!(!String::from_utf8(output).unwrap().contains("; ["));
         }
         let mut output = Vec::new();
         let mut progress = Progress::new(&mut output, false).terminal(true);
@@ -308,7 +322,7 @@ mod tests {
     #[test]
     fn file_bar_remains_visible_without_wrapping_on_smaller_terminals() {
         let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; ETA=2h";
-        let suffix = b"; file [=====-----] 50.0% 512.00 MiB/1.00 GiB";
+        let suffix = b"; [*****.....]";
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(100));
         assert!(line.len() < 100);
@@ -316,11 +330,29 @@ mod tests {
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(20));
         assert!(line.len() < 20);
-        assert!(!line.windows(6).any(|part| part == b"file ["));
+        assert!(!line.windows(3).any(|part| part == b"; ["));
+        assert!(line.ends_with(b"; ETA=2h"));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, None);
         assert!(line.starts_with(base));
         assert!(line.ends_with(suffix));
+    }
+
+    #[test]
+    fn eta_is_never_shortened_with_or_without_a_file_bar() {
+        let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; ETA=2h 38m 10s";
+        let bar = b"; [*****.....]";
+        for suffix in [bar.as_slice(), b"".as_slice()] {
+            for columns in 1..200 {
+                let mut line = base.to_vec();
+                fit_progress(&mut line, suffix, Some(columns));
+                let line = String::from_utf8(line).unwrap();
+                assert!(line.contains("ETA=2h 38m 10s"), "width={columns}: {line}");
+                if columns > "ETA=2h 38m 10s".len() + 2 {
+                    assert!(line.len() < columns, "width={columns}: {line}");
+                }
+            }
+        }
     }
 
     #[test]
