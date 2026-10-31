@@ -67,8 +67,9 @@ for the full procedure, including preparation and later integrity checks.
 
 - Only regular-file contents and paths are cataloged—not empty directories or
   filesystem metadata. Symlinks and special files are unsupported.
-- Everything under the selected root is included except its root `.keeper/`.
-  There are no automatic system-folder exclusions.
+- Everything under the selected root is included except Keeper configuration and
+  explicit root-level [`.keeperignore` exclusions](docs/ignore.md). There are no
+  automatic system-folder exclusions. Set the policy before indexing.
 - Stop writers throughout a scan, including pauses. Keeper is not a snapshot.
 - Exit codes: **0** match/success, **1** differences, **2** error or incomplete check.
   An incomplete metadata report is diagnostic output, not a successful comparison.
@@ -78,7 +79,8 @@ Use `keeper help <command>` for focused help, or consult:
 - [Usage reference: commands, reports, options, and safety details](docs/usage.md)
 - [Drive/replica workflow](docs/replica-workflow.md)
 - [Resumable scans and recovery](docs/resume.md)
-- [Catalog format and manual inspection](docs/catalog-v1.md)
+- [Exclusions and scan scope (`.keeperignore`)](docs/ignore.md)
+- [Catalog format and manual inspection](docs/catalog-v1.md), [scoped catalogs](docs/catalog-v2.md)
 - [Development and build checks](docs/development.md)
 - [Design principles](docs/principles.md), [roadmap](docs/roadmap.md), and
   [filesystem qualification](docs/qualification.md)

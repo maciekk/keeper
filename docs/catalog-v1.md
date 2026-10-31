@@ -2,7 +2,9 @@
 
 This document describes the implemented format, not just a proposed schema.
 Future incompatible schema changes must use a new format version; do not silently
-reinterpret catalogs already written by this implementation.
+reinterpret catalogs already written by this implementation. Unscoped roots still
+write this format unchanged; new roots using `.keeperignore` write
+[format 2](catalog-v2.md), which adds a checksummed scope policy. Both remain readable.
 
 ```text
 .keeper/

@@ -39,9 +39,10 @@ independent backups. Follow the [design principles](principles.md).
 This is the Rust rewrite of `maciekk/keeper`. The unused Go experiment remains in
 Git history; its last commit is `5d021b2e818bda9e260432b67ac323a22844064e`.
 
-The authoritative catalog is still format 1; the recent comparison and resumability
-features do not require conversion or reindexing. Tests read a golden catalog
-from the foundation release and check unchanged serialization. See
+Unscoped roots still write format 1; roots with `.keeperignore` write
+[format 2](catalog-v2.md), recording their exact exclusion policy. Both remain
+readable without conversion or reindexing. Tests read a golden format-1 catalog
+from the foundation release and check unchanged unscoped serialization. See
 [catalog format 1](catalog-v1.md) and the
 [compatibility commitments](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge).
 

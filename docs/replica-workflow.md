@@ -56,10 +56,12 @@ or modifying the valuable corpus. Plain read-only checks do not create `.keeper`
 Preflight inventories every supported file and byte size using metadata. It lists
 all encountered traversal/unsupported-object issues rather than stopping at the
 first. It does not open regular files, test their readability, or test filesystem
-publication support. An actual hashing run may still fail later. There is no ignore
-configuration yet; system folders, symlinks, or unsupported files within a drive
-root must not be silently discarded to obtain a reassuring match. Choose the
-intended corpus root deliberately.
+publication support. An actual hashing run may still fail later. Choose the
+intended corpus root deliberately. Root-level [`.keeperignore`](ignore.md) can
+explicitly exclude entries such as `/lost+found/` before traversal; exclusions are
+disclosed, never inferred from “junk” classification. Choose the same exact policy
+on replicas before initialization/resumable sessions. Different policies cannot
+establish equivalent coverage.
 
 ## 3. Definitive baseline workflow (after target-drive qualification)
 
@@ -70,7 +72,8 @@ not automatic reverse synchronization of unverified changes. See [replica author
 and failure domains](principles.md#8-replica-authority-is-an-explicit-external-policy).
 
 1. Stop writers on both trees, or use appropriate read-only filesystem snapshots.
-2. Run `preflight` on both chosen corpus roots and resolve reported issues.
+2. Choose any explicit `.keeperignore` policy on both roots, then run `preflight`
+   and resolve reported issues. Do not change policy during an indexing session.
 3. Run `init` on each tree (or `init --resume` for a checkpointed session; repeat
    that command after cancellation). Keep writers stopped throughout pauses too.
    Each catalog records that tree's own physical observations; no catalog is copied
@@ -108,10 +111,12 @@ tests are not power-loss tests.
 The [compatibility commitments](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge)
 are the project-wide policy; the following describes this milestone's actual state.
 
-The three authoritative format-1 files are unchanged by this milestone. A golden
+The three authoritative format-1 files remain unchanged for unscoped roots. A golden
 catalog captured from foundation commit `85debcc` is read and compared in tests;
-a new catalog over those same bytes must match it byte for byte. No reindexing is
-needed to use existing catalogs with these commands.
+a new unscoped catalog over those same bytes must match it byte for byte. Scoped
+roots write [format 2](catalog-v2.md), preserving the exact ignore policy. Both
+versions remain readable; no reindexing is needed to use existing catalogs.
+Changing an established baseline's scope is not an implicit migration or acceptance.
 
 Full BLAKE3 IDs, sizes, and reversible relative paths are the expensive reusable
 knowledge. Future incompatible formats must declare a new version and provide a

@@ -23,7 +23,9 @@ resolved root. Comparison inventory labels retain the supplied path arguments.
 `init --resume` and `status --resume` start or continue checkpointed sessions.
 They reuse validated earlier per-path observations, **not fresh full scrubs**.
 Keep writers stopped through pauses too. See [resume semantics and recovery](resume.md).
-Live comparison has no checkpoint support yet.
+Live comparison has no checkpoint support yet. Root-level [`.keeperignore`](ignore.md)
+defines explicit exclusions. Set it before indexing: policies are recorded in
+catalogs and pinned by resumable sessions. No implicit housekeeping exclusions exist.
 
 Preflight runs automatically before hashing. Live comparison preflights both trees
 before hashing either. Standalone preflight does not open regular files, certify
@@ -39,7 +41,9 @@ metadata. Reading may cause filesystem access-time updates.
 Comparison is path-sensitive: identical bytes elsewhere do not establish an exact
 replica. Renames appear as one path only on the left and another only on the right.
 Neither content equality nor a baseline establishes semantic validity, provenance,
-or which replica is authoritative.
+or which replica is authoritative. Different exclusion policies produce a scope
+mismatch and exit 2, not equality; matching selected paths says nothing about
+excluded paths. Catalog-only comparison uses saved policies.
 
 - **Catalog comparison** says only what was recorded. It does not check whether
   files still exist or still contain those bytes.
@@ -105,7 +109,8 @@ recognition uses exact, case-sensitive path components:
 - `.Spotlight-V100`, `.fseventsd`, `.DS_Store`
 
 Detailed file records use `category=OS_HOUSEKEEPING` for these recognized names.
-Nothing is excluded and such differences still return exit code 1. Trash may
+Classification itself excludes nothing, and such differences still return exit
+code 1. Explicit `.keeperignore` exclusions are separate from this category. Trash may
 contain valuable user files; unfamiliar OS files remain unclassified. “All
 reported differences” being likely junk does not rule out equal-sized content
 changes in metadata-only mode.
@@ -142,7 +147,7 @@ Store logs outside the scanned roots.
 | --- | --- |
 | 0 | Success / no differences within the command's stated scope |
 | 1 | Completed status or comparison with differences |
-| 2 | Operational error, unsupported object, invalid catalog, incomplete metadata comparison, cancellation, or CLI usage error |
+| 2 | Operational error, scope-policy mismatch, unsupported object, invalid catalog, incomplete metadata comparison, cancellation, or CLI usage error |
 
 Scripts using `set -e` must handle expected difference exits explicitly. Exit 2
 never establishes equality.
@@ -154,10 +159,11 @@ never establishes equality.
   Hard-linked paths are each physically read and checked.
 - Symlinks (including directory symlinks), sockets, devices, and FIFOs are
   unsupported. They are not silently ignored or followed during traversal.
-- Everything below the root is included except its reserved `.keeper/` directory.
-  There are no implicit `.git`, hidden-file, system-folder, or mount-point
-  exclusions. Nested `.keeper` directories are ordinary data. Do not store user
-  data in the root's `.keeper/`.
+- Everything below the root is included except its reserved `.keeper/`, root
+  `.keeperignore` configuration, and explicit policy matches. There are no implicit
+  `.git`, hidden-file, system-folder, or mount-point exclusions. Nested `.keeper`
+  and `.keeperignore` paths are ordinary data unless explicitly excluded. Do not
+  store user data in the root's `.keeper/`.
 - File identity, size, mtime, and ctime are checked before/after hashing; directory
   changes during traversal are checked. This detects common races, not every
   mutation after a file was checked. Keeper does not provide a snapshot or defend
