@@ -47,7 +47,7 @@ fn preflight_collects_all_issues_without_creating_metadata_or_reading_contents()
     assert!(report.contains("ISSUE\tlink-one\t"));
     assert!(report.contains("ISSUE\tlink-two\t"));
     assert!(report.contains("ISSUE\tfifo\t"));
-    assert!(report.contains("1 regular file(s), 3 bytes, 3 issue(s)"));
+    assert!(report.contains("1 regular file(s), 3 B, 3 issue(s)"));
     assert!(report.contains("Contents not read"));
     assert!(!root.join(".keeper").exists());
     // Init performs the same preflight before any hashing or publication.
@@ -65,7 +65,7 @@ fn preflight_counts_hidden_and_nested_keeper_files_but_excludes_root_metadata() 
     run(&["init"], &[tmp.path()], 0);
     let before = baseline(tmp.path());
     let result = run(&["preflight"], &[tmp.path()], 0);
-    assert!(stdout(&result).contains("2 regular file(s), 12 bytes, 0 issue(s)"));
+    assert!(stdout(&result).contains("2 regular file(s), 12 B, 0 issue(s)"));
     assert_eq!(baseline(tmp.path()), before);
 }
 
@@ -166,7 +166,7 @@ fn progress_is_on_stderr_and_can_be_disabled() {
     fs::write(tmp.path().join("a"), vec![0; 300_001]).unwrap();
     let result = run(&["init", "--progress", "always"], &[tmp.path()], 0);
     assert!(stderr(&result).contains("Preflight: completed"));
-    assert!(stderr(&result).contains("Hashing: completed; files=1/1; read=300001/300001 bytes"));
+    assert!(stderr(&result).contains("Hashing: completed; files=1/1; read=292.97 KiB/292.97 KiB"));
     assert!(!stdout(&result).contains("Hashing:"));
     let result = run(&["status", "--progress", "never"], &[tmp.path()], 0);
     assert!(result.stderr.is_empty());

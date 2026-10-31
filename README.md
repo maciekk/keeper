@@ -28,8 +28,17 @@ Implemented:
 - `compare LEFT RIGHT`: compare recorded path/content catalogs, not current bytes.
 - `compare --live LEFT RIGHT`: physically read both trees and compare current
   paths/content, without requiring, using, or updating catalogs.
-- Progress and throughput on stderr, including within large files. Use
+- In-place progress and throughput on stderr, including within large files,
+  percentage and estimated time remaining when totals are known. Use
   `--progress auto|always|never` (default: auto, enabled only on a terminal).
+  Forced redirected progress logs phase starts/completions without terminal controls
+  or repetitive updates.
+- Human-friendly numbers: comma-separated counts through 999,999, then compact
+  M/G/T-style suffixes. Byte sizes always use B/KiB/MiB/GiB/etc., without raw-byte
+  totals. Exact values remain in catalog metadata. File/unique-content summaries
+  provide context. Restrained colour highlights progress phases, completion,
+  values, and report labels; automatic colour checks stdout and stderr separately.
+  `NO_COLOR` disables automatic colour. Override with `--color auto|always|never`.
 - Discoverable command syntax in `--help`; `help` is equivalent, and
   `help <command>` (including `help catalog check`) provides focused details.
 - Full BLAKE3 IDs, reversible Unix filename encoding, deduplicated object records.
