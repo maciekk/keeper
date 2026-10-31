@@ -82,6 +82,18 @@ pub fn dim(text: &str, color: bool) -> String {
     }
 }
 
+pub fn cancellation(text: &str, color: bool) -> String {
+    if !color {
+        return text.to_owned();
+    }
+    // Reset intensity around the token so the surrounding dim style cannot
+    // diminish the highlight, then restore dim (not bold) for the rest.
+    format!(
+        "\x1b[2m{}\x1b[0m",
+        text.replace("--resume", "\x1b[0;1;32m--resume\x1b[0;2m")
+    )
+}
+
 pub fn note(out: &mut impl Write, text: &str, color: bool) -> io::Result<()> {
     writeln!(out, "{}", dim(text, color))
 }
@@ -333,6 +345,16 @@ mod tests {
         assert_eq!(styled.matches("\x1b[32m*\x1b[0m").count(), 5);
         assert_eq!(styled.matches("\x1b[2m.\x1b[0m").count(), 5);
         assert!(styled.contains("ETA="));
+    }
+
+    #[test]
+    fn cancellation_is_dim_with_a_bold_green_resume_token() {
+        let text = "keeper: cancelled; when using --resume, completed files are retained";
+        assert_eq!(cancellation(text, false), text);
+        let styled = cancellation(text, true);
+        assert!(styled.starts_with("\x1b[2mkeeper: cancelled"));
+        assert!(styled.contains("\x1b[0;1;32m--resume\x1b[0;2m, completed"));
+        assert!(styled.ends_with("\x1b[0m"));
     }
 
     #[test]

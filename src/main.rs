@@ -411,7 +411,12 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
-            eprintln!("keeper: {error:#}");
+            let message = format!("keeper: {error:#}");
+            if cancel::is_cancellation(&error) {
+                eprintln!("{}", display::cancellation(&message, progress_color));
+            } else {
+                eprintln!("{message}");
+            }
             ExitCode::from(2)
         }
     }

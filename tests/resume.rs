@@ -28,16 +28,25 @@ fn baseline(root: &Path) -> Vec<Vec<u8>> {
 // A tiny first file followed by a huge sparse file makes interruption independent
 // of disk speed. Wait for the durable first record, then signal during hashing.
 fn interrupt(root: &Path, operation: &str, signal: i32) -> Vec<u8> {
+    interrupt_with_color(root, operation, signal, "never").0
+}
+
+fn interrupt_with_color(
+    root: &Path,
+    operation: &str,
+    signal: i32,
+    color: &str,
+) -> (Vec<u8>, String) {
     fs::write(root.join("a"), b"completed first").unwrap();
     fs::File::create(root.join("z-large"))
         .unwrap()
         .set_len(2 * 1024 * 1024 * 1024)
         .unwrap();
     let mut child = Command::new(assert_cmd::cargo::cargo_bin!("keeper"))
-        .args([operation, "--resume"])
+        .args([operation, "--resume", "--color", color])
         .arg(root)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let work = root.join(format!(".keeper/{operation}.work"));
@@ -55,11 +64,42 @@ fn interrupt(root: &Path, operation: &str, signal: i32) -> Vec<u8> {
     }
     // SAFETY: signal a child process owned by this test.
     assert_eq!(unsafe { libc::kill(child.id() as i32, signal) }, 0);
-    let status = child.wait().unwrap();
+    let output = child.wait_with_output().unwrap();
     if signal != libc::SIGKILL {
-        assert_eq!(status.code(), Some(2));
+        assert_eq!(output.status.code(), Some(2));
     }
-    fs::read(work).unwrap()
+    (
+        fs::read(work).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn cancellation_message_is_dim_but_resume_is_highlighted() {
+    for color in ["always", "never"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, stderr) = interrupt_with_color(tmp.path(), "init", libc::SIGINT, color);
+        assert!(stderr.contains("cancelled; when using"), "{stderr}");
+        if color == "always" {
+            assert!(stderr.starts_with("\x1b[2mkeeper:"));
+            assert!(stderr.contains("\x1b[0;1;32m--resume\x1b[0;2m"));
+            assert!(stderr.ends_with("\x1b[0m\n"));
+        } else {
+            assert!(!stderr.contains('\x1b'));
+            assert!(stderr.contains("--resume"));
+        }
+    }
+    let result = cargo_bin_cmd!("keeper")
+        .args(["status", "--color", "always", "/does/not/exist/keeper-test"])
+        .assert()
+        .code(2)
+        .get_output()
+        .stderr
+        .clone();
+    assert!(
+        !result.contains(&0x1b),
+        "unrelated errors must not be dimmed"
+    );
 }
 
 #[test]
