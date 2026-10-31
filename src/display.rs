@@ -228,8 +228,12 @@ pub fn progress_line(text: &str, color: bool, completed: bool) -> String {
                 };
                 format!("\x1b[2m{key}=\x1b[0m{value}")
             } else if index == 0 {
-                let style = if completed { "1;32" } else { "1;36" };
-                format!("\x1b[{style}m{part}\x1b[0m")
+                if let Some((phase, state)) = part.split_once(": ") {
+                    let style = if completed { "1;32" } else { "1;33" };
+                    format!("\x1b[1;36m{phase}\x1b[0m: \x1b[{style}m{state}\x1b[0m")
+                } else {
+                    emphasis(part, true)
+                }
             } else {
                 emphasis(part, true)
             };
@@ -346,6 +350,24 @@ mod tests {
             (86_400.0, "24h"),
         ] {
             assert_eq!(duration(seconds), expected);
+        }
+    }
+
+    #[test]
+    fn progress_phase_and_state_have_distinct_styles() {
+        for phase in ["Hashing", "Left Hashing", "Preflight"] {
+            for (state, completed, style) in [
+                ("started", false, "1;33"),
+                ("running", false, "1;33"),
+                ("completed", true, "1;32"),
+            ] {
+                let text = format!("{phase}: {state}; elapsed=1s");
+                assert_eq!(progress_line(&text, false, completed), text);
+                let styled = progress_line(&text, true, completed);
+                assert!(styled.starts_with(&format!(
+                    "\x1b[1;36m{phase}\x1b[0m: \x1b[{style}m{state}\x1b[0m;"
+                )));
+            }
         }
     }
 

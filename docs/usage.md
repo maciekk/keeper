@@ -142,7 +142,9 @@ any progress or diagnostics; progress phases do not add another leading blank li
 - Forced redirected progress records phase starts/completions without terminal
   controls or repetitive updates.
 - `--color auto|always|never`: automatic colour checks stdout and stderr separately;
-  `NO_COLOR` disables automatic colour. Explanatory notes and table headers are dim.
+  `NO_COLOR` disables automatic colour. Progress phases are bold cyan; their
+  statuses are bold yellow for started/running and bold green for completed.
+  Explanatory notes and table headers are dim.
   Cancellation messages are dim too, with `--resume` highlighted in bold green.
 - Counts use comma separators through 999,999, then compact M/G/T-style suffixes.
   Byte sizes use B/KiB/MiB/etc. Exact values remain in catalog metadata.
