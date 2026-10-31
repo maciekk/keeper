@@ -221,7 +221,7 @@ pub fn progress_line(text: &str, color: bool, completed: bool) -> String {
                 part.replace('*', "\x1b[32m*\x1b[0m")
                     .replace('.', "\x1b[2m.\x1b[0m")
             } else if let Some((key, value)) = part.split_once('=') {
-                let value = if key.trim() == "ETA" {
+                let value = if key.trim() == "eta" {
                     format!("\x1b[1;32m{value}\x1b[0m")
                 } else {
                     emphasis(value, true)
@@ -373,25 +373,25 @@ mod tests {
 
     #[test]
     fn file_progress_uses_coloured_stars_without_changing_plain_output() {
-        let text = "Hashing: running; ETA=2h; [*****.....]";
+        let text = "Hashing: running; eta=2h; [*****.....]";
         assert_eq!(progress_line(text, false, false), text);
         let styled = progress_line(text, true, false);
         assert_eq!(styled.matches("\x1b[32m*\x1b[0m").count(), 5);
         assert_eq!(styled.matches("\x1b[2m.\x1b[0m").count(), 5);
-        assert!(styled.contains("ETA="));
+        assert!(styled.contains("eta="));
     }
 
     #[test]
     fn progress_highlights_values_and_dims_labels_after_bar() {
         for text in [
-            "Hashing: running; elapsed=1m; 50.0%; ETA=2h; [*****.....] | files=1/2; read=1 B/2 B",
-            "Hashing: running; 50.0%; ETA=2h | files=1/2",
-            "50.0%; ETA=2h",
-            "ETA=2h",
+            "Hashing: running; elapsed=1m; 50.0%; eta=2h; [*****.....] | files=1/2; read=1 B/2 B",
+            "Hashing: running; 50.0%; eta=2h | files=1/2",
+            "50.0%; eta=2h",
+            "eta=2h",
         ] {
             assert_eq!(progress_line(text, false, false), text);
             let styled = progress_line(text, true, false);
-            assert!(styled.contains("ETA=\x1b[0m\x1b[1;32m2h"));
+            assert!(styled.contains("eta=\x1b[0m\x1b[1;32m2h"));
             if text.contains("50.0%") {
                 assert!(styled.contains("50.0%\x1b[0m"));
                 assert!(styled.contains("\x1b[1;32m50.0%") || styled.contains("\x1b[1;32m 50.0%"));
