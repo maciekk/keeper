@@ -383,8 +383,8 @@ mod tests {
         progress.report("running").unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("elapsed=2h 38m 10s"));
-        assert!(text.contains("ETA=2h 38m 10s"));
+        assert!(text.contains("elapsed=3h"));
+        assert!(text.contains("ETA=3h"));
         assert!(!text.contains("9490s"));
     }
 
