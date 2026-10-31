@@ -53,6 +53,7 @@ impl<'a> Progress<'a> {
 
     pub fn begin(&mut self, phase: &'static str, totals: Option<(u64, u64)>) -> io::Result<()> {
         crate::cancel::check()?;
+        // One leading separator per invocation, never between Left/Right phases.
         if self.enabled && self.terminal && self.phase.is_empty() {
             writeln!(self.out)?;
         }
@@ -109,7 +110,7 @@ impl<'a> Progress<'a> {
             )?,
             None => write!(
                 line,
-                "{}{}: {state}; files={}; inventoried={} (contents not read); elapsed={:.1}s",
+                "{}{}: {state}; files={}; inventoried={}; elapsed={:.1}s",
                 self.scope,
                 self.phase,
                 crate::display::number(self.files),
@@ -144,9 +145,6 @@ impl<'a> Progress<'a> {
         )?;
         if !self.terminal || state == "completed" {
             writeln!(self.out)?;
-            if self.terminal {
-                writeln!(self.out)?;
-            }
             self.active = false;
         }
         self.out.flush()
@@ -207,11 +205,28 @@ mod tests {
         progress.finish().unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert_eq!(text.matches('\n').count(), 3);
+        assert_eq!(text.matches('\n').count(), 2);
         assert!(text.starts_with("\n\r\x1b[2K"));
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
-        assert!(text.ends_with("100.0%\n\n"));
+        assert!(text.ends_with("100.0%\n"));
+    }
+
+    #[test]
+    fn left_and_right_terminal_phases_are_contiguous() {
+        let mut output = Vec::new();
+        let mut progress = Progress::new(&mut output, true).terminal(true);
+        for scope in ["Left ", "Right "] {
+            progress.set_scope(scope);
+            progress.begin("Preflight", None).unwrap();
+            progress.finish().unwrap();
+        }
+        drop(progress);
+        let text = String::from_utf8(output).unwrap();
+        assert!(!text.contains("\n\n"));
+        assert_eq!(text.matches('\n').count(), 3);
+        assert!(text.starts_with("\n\r\x1b[2KLeft Preflight"));
+        assert!(text.contains("\n\r\x1b[2KRight Preflight"));
     }
 
     #[test]
