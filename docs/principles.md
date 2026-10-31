@@ -74,7 +74,7 @@ Keep these version concepts separate:
 | Application version | Keeper implementation release, currently a Rust v2 rewrite |
 | Catalog format version | Meaning and encoding of authoritative metadata; currently 1 |
 | Catalog generation | An accepted state within a catalog, not a schema version; currently genesis only |
-| Cache/checkpoint version and session identity | Reconstructable work state, not accepted catalog state; not implemented yet |
+| Cache/checkpoint version and session identity | Reconstructable per-path session work state; work format 1, see [resume.md](resume.md) |
 | Validator identity/version | Which semantic check produced which evidence; not implemented yet |
 
 Compatibility policy for future work:
@@ -126,8 +126,8 @@ validate it, synchronize it appropriately, and publish atomically under writer
 exclusion. Never silently weaken guarantees when a filesystem lacks required
 operations. Test failure paths, interruption, and actual target filesystems.
 
-Genesis no-replace publication is implemented. Safe replacement of generations,
-migration publication, and resumable checkpoints are future work. Process-kill
+Genesis no-replace publication and opt-in resumable checkpoints are implemented.
+Safe replacement of generations and migration publication are future work. Process-kill
 success is not proof of power-loss durability; filesystem and hardware guarantees
 still matter.
 

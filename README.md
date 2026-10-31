@@ -7,7 +7,7 @@ text, not an opaque database. It does not store file contents or replace backups
 This is the Rust rewrite of `maciekk/keeper`. The unused Go experiment is preserved
 in Git history (last Go commit: `5d021b2e818bda9e260432b67ac323a22844064e`).
 
-## Current milestone: replica comparison
+## Current milestone: resumable operations (target-drive qualification pending)
 
 **Early development, not yet a production maintenance tool.** Test on a small copy
 first. Do not use the existence of a Keeper catalog as permission to delete originals
@@ -19,6 +19,9 @@ Implemented:
 - `catalog check`: verify catalog checksums, canonical encoding, and consistency.
 - `status`: physically reread **every regular file**, reporting added, missing,
   and changed paths. No metadata shortcut and no baseline updates.
+- `init --resume` / `status --resume`: checkpointed multi-invocation sessions,
+  cooperative SIGINT/SIGTERM cancellation, and validated per-path reuse. Explicitly
+  **not fresh full scrubs**. See [resume semantics and recovery](docs/resume.md).
 - `preflight`: metadata-only inventory listing unsupported objects and traversal
   errors. Automatically runs before any hashing; live comparison preflights both
   trees before hashing either.
@@ -32,8 +35,8 @@ Implemented:
 - Fail closed on read errors, detected concurrent mutations, unsupported filesystem
   objects, and invalid catalogs. No partial-success status report.
 
-Deferred: explicit acceptance, incremental scans/cache, rename inference, semantic
-validators, resumability, verification timestamps, object-presence-only backup
+Deferred: explicit acceptance, general incremental scans, rename inference, semantic
+validators, durable verification history, object-presence-only backup
 comparison, and performance tuning. Renames currently appear as a missing path plus
 an added path. Comparison is deliberately path-sensitive: identical bytes elsewhere
 do not establish an exact replica. Format 1 is unchanged from the foundation;
@@ -128,8 +131,9 @@ baseline procedure, plus remaining prerequisites for the definitive whole-drive 
   checked. This catches common races, **not** every change after a file was checked.
   Keeper does not provide a filesystem snapshot or defend against an attacker
   concurrently replacing ancestor directories. Read-only snapshots are preferable.
-- `status`, `preflight`, `compare` (both modes), and `catalog check` do not write
-  Keeper metadata or dataset contents. The filesystem may update access times as
+- Plain `status`, `preflight`, `compare` (both modes), and `catalog check` do not write
+  Keeper metadata or dataset contents. `status --resume` writes disposable work
+  records under `.keeper/`, never the baseline. The filesystem may update access times as
   a side effect of reading. Standalone preflight does not open regular files;
   it does not certify their readability or test lock/fsync/publication support.
 - Publication requires filesystem support for advisory locks, file/directory
@@ -142,8 +146,11 @@ baseline procedure, plus remaining prerequisites for the definitive whole-drive 
   changes. A published catalog is never overwritten by `init`.
 - Inventories (including stat metadata), catalogs, and preflight issues are held
   in RAM. Traversal/hashing is synchronous. Live comparison holds information for
-  both trees. There is no resume: interruption requires starting again. Expect
-  full-data read cost on every status or live comparison run.
+  both trees. Checkpoint records and their text also consume RAM. Plain status
+  and live comparison always pay full-data read cost; opt-in resumable sessions
+  reuse earlier per-path observations, not fresh evidence. An interrupted file
+  must be reread. Per-file checkpoint fsync can be costly for small-file corpora.
+  See [measurements and qualification](docs/qualification.md).
 
 Copy `.keeper/catalog/` off-device. Its checksums detect accidental damage to tables,
 not malicious coordinated edits of tables and manifest. A catalog beside its data
@@ -153,6 +160,8 @@ is not an independent backup or a cryptographic trust anchor.
 
 - [Design principles, metadata longevity, and migration policy](docs/principles.md)
 - [Catalog format and manual inspection](docs/catalog-v1.md)
+- [Checkpointed sessions, cancellation, and recovery](docs/resume.md)
+- [Filesystem qualification and resource measurements](docs/qualification.md)
 - [Replica/drive workflow](docs/replica-workflow.md)
 - [Next milestones and unresolved decisions](docs/roadmap.md)
 - [Long-form design](docs/design.md), adapted from the original planning notes.

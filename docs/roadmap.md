@@ -11,7 +11,7 @@ foundations, not disposable indexing experiments.
 | --- | --- | --- |
 | Genesis and physical status | Done: `85debcc` | Inspectable canonical format, no-overwrite init, catalog self-check, read-only full-byte drift detection |
 | Replica comparison | Done: `43766e6` | Explicit recorded vs live scope, preflight, stderr progress, failure tests, format-1 compatibility fixture |
-| Resumable large-drive operation | Next | Interruptible hashing/checking with validated checkpoints; target-filesystem qualification and representative resource measurements |
+| Resumable large-drive operation | Implemented; qualification gate open | Opt-in checkpointed init/status and cancellation; actual target-filesystem qualification and representative measurements still required |
 | Explicit acceptance | Planned | Review and intentionally commit changes using safe multi-generation publication; never silently rebaseline |
 | Semantic validators | Planned | Object/validator-version evidence, direct subprocess orchestration, separate validity from byte identity |
 | Rolling maintenance | Planned | Age, failure, budget, and file-count selection with durable progress and honest per-replica physical evidence |
@@ -55,19 +55,33 @@ Other tests cover byte-level filename escaping, duplicate objects and hard-linke
 copies, baseline immutability, no-replace publication, writer exclusion, failed-init
 retry, malformed catalogs, comparison scope, and refusal of symlinks/special objects.
 
-## Next: resumable large-drive operation
+## Implemented: resumable operations; whole-drive qualification still open
 
-Before the recommended definitive whole-drive baseline:
+`init --resume` and `status --resume` now support synced per-path checkpoints,
+SIGINT/SIGTERM cancellation, and session/root/baseline identity validation. Complete
+corrupt records fail closed; an interrupted trailing append is safely discarded.
+Changed file fingerprints are rehashed, including ctime changes with restored mtime.
+Each duplicate physical path has independent evidence. Tests exercise clean
+cancellation, forced process death, stale records, wrong roots/baselines, writer
+exclusion and unchanged format-1 baseline behavior.
 
-- Handle clean cancellation and resumable initialization/verification with durable
-  checkpoints. A successful physical pass must not depend on an unchecked cache.
-- Define a scan/session identity, root identity, checkpoint version, and conditions
+Work timestamps are **disposable session observations**, not durable verification
+history. Resumed results explicitly report earlier reads and never claim a fresh
+scrub. Plain `status` remains full-byte and read-only. No acceptance, live-compare
+resume, partial-file hashing, or implicit inclusion/exclusion policy was added.
+See [resume semantics](resume.md) and [local measurements / qualification procedure](qualification.md).
+
+The following original milestone requirements remain the whole-drive checklist;
+implementation and local smoke measurements do not fulfill actual target-drive
+qualification. Before the recommended definitive whole-drive baseline:
+
+- Implemented: clean cancellation and resumable initialization/verification with
+  validated durable checkpoints. Fresh physical passes still bypass all work state.
+- Implemented: scan/session identity, root identity, checkpoint version, and conditions
   for invalidating/rechecking completed work on resume. File contents can change
   without size/mtime changes; never describe reused metadata as a fresh full scrub.
-- Track **per-path physical verification**. Content-level validation may be shared;
-  reading one duplicate does not prove the bytes of another copy. Decide whether
-  verification times are disposable cache or durable history, rather than conflating
-  them with immutable object identity.
+- Implemented: **per-path physical observations**, with disposable work timestamps,
+  not durable history. Reading one duplicate never checks another physical path.
 - Test actual target filesystems on disposable copies: locks, sync, no-replace
   publication and failure behavior. Existing process-kill tests do not establish
   actual power-loss durability or target-device compatibility.

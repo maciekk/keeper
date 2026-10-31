@@ -170,21 +170,52 @@ pub fn hash_inventory(
     inventory: Inventory,
     progress: &mut Progress<'_>,
 ) -> Result<Catalog> {
+    hash_inventory_checkpointed(root, inventory, progress, None)
+}
+
+pub fn hash_inventory_checkpointed(
+    root: &Path,
+    inventory: Inventory,
+    progress: &mut Progress<'_>,
+    mut checkpoint: Option<&mut crate::checkpoint::Checkpoint>,
+) -> Result<Catalog> {
     inventory.ensure_clean()?;
     check_directories(root, &inventory)?;
     progress.begin("Hashing", Some((inventory.file_count(), inventory.bytes)))?;
     let mut catalog = Catalog::new();
     for (relative, meta) in &inventory.files {
+        crate::cancel::check()?;
         let path = joined(root, relative);
-        let entry = hash_file(&path, meta, |n| {
-            progress.advance(0, n)?;
-            Ok(())
-        })
-        .with_context(|| format!("hash {}", label(relative)))?;
+        let entry = match checkpoint
+            .as_mut()
+            .and_then(|work| work.reuse(relative, meta))
+        {
+            Some(entry) => entry,
+            None => {
+                let entry = hash_file(&path, meta, |n| {
+                    progress.advance(0, n)?;
+                    Ok(())
+                })
+                .with_context(|| format!("hash {}", label(relative)))?;
+                if let Some(work) = checkpoint.as_mut() {
+                    work.record(relative, meta, &entry)?;
+                }
+                entry
+            }
+        };
         progress.advance(1, 0)?;
         catalog.insert(relative.clone(), entry);
     }
     check_directories(root, &inventory)?;
+    // In particular, reused observations must still refer to this physical path.
+    for (relative, before) in &inventory.files {
+        ensure!(
+            same_file(before, &fs::symlink_metadata(joined(root, relative))?),
+            "file {} changed during pass; stop writers and retry",
+            label(relative)
+        );
+    }
+    crate::cancel::check()?;
     progress.finish()?;
     Ok(catalog)
 }
@@ -279,6 +310,62 @@ fn hash_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resumed_pass_reuses_per_path_and_rechecks_restored_mtime_changes() {
+        use crate::{catalog::InitGuard, checkpoint::Checkpoint};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let _guard = InitGuard::acquire(root).unwrap();
+        for name in ["a", "b", "duplicate"] {
+            fs::write(root.join(name), b"original").unwrap();
+        }
+        // Simulate completed reads before an interrupted session. In particular,
+        // knowing a's object hash must not skip duplicate's physical read.
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        let session = work.session.clone();
+        for name in ["a", "b"] {
+            let path = root.join(name);
+            let meta = fs::metadata(&path).unwrap();
+            let entry = hash_file(&path, &meta, |_| Ok(())).unwrap();
+            work.record(name.as_bytes(), &meta, &entry).unwrap();
+        }
+        drop(work);
+        let path = root.join("b");
+        let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, b"modified").unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(mtime))
+            .unwrap();
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        assert_eq!(work.session, session);
+        let mut sink = Vec::new();
+        let mut progress = Progress::new(&mut sink, false);
+        let inventory = preflight(root, &mut progress).unwrap();
+        let observed =
+            hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
+        assert_eq!(work.reused, 1);
+        assert_eq!(
+            observed[b"b".as_slice()].hash,
+            format!("b3:{}", blake3::hash(b"modified").to_hex())
+        );
+        assert_eq!(observed[b"a".as_slice()], observed[b"duplicate".as_slice()]);
+        // Resume rediscovers the current namespace rather than blindly trusting
+        // old paths, even if completed work included a now-missing path.
+        fs::remove_file(root.join("a")).unwrap();
+        fs::write(root.join("new"), b"new").unwrap();
+        drop(work);
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        let inventory = preflight(root, &mut progress).unwrap();
+        let observed =
+            hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
+        assert!(!observed.contains_key(b"a".as_slice()));
+        assert!(observed.contains_key(b"new".as_slice()));
+        assert_eq!(work.reused, 2);
+    }
 
     #[test]
     fn streams_files_larger_than_the_read_buffer() {
