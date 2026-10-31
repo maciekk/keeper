@@ -204,20 +204,20 @@ fn report_entries<T: PartialEq>(
     heading(out, "Inventory", color)?;
     display::table(
         out,
-        &["Files", "Size", "Root (L / R)"],
+        &["Root (L / R)", "Files", "Size"],
         &[
             vec![
+                options.roots[0].clone(),
                 number(options.totals[0].0),
                 bytes(options.totals[0].1),
-                options.roots[0].clone(),
             ],
             vec![
+                options.roots[1].clone(),
                 number(options.totals[1].0),
                 bytes(options.totals[1].1),
-                options.roots[1].clone(),
             ],
         ],
-        &[true, true, false],
+        &[false, true, true],
         color,
     )?;
     let [(left_files, left_bytes), (right_files, right_bytes)] = options.totals;
@@ -237,19 +237,19 @@ fn report_entries<T: PartialEq>(
             .iter()
             .map(|(path, &[left, right, changed, os])| {
                 vec![
+                    encoding::encode(path),
                     number(left),
                     number(right),
                     number(changed),
                     number(os),
-                    encoding::encode(path),
                 ]
             })
             .collect::<Vec<_>>();
         display::table(
             out,
-            &["Left-only", "Right-only", "Different", "Junk", "Directory"],
+            &["Directory", "Left-only", "Right-only", "Different", "Junk"],
             &rows,
-            &[true, true, true, true, false],
+            &[false, true, true, true, true],
             color,
         )?;
     }
