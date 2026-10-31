@@ -283,6 +283,72 @@ mod tests {
         );
     }
 
+    // Subprocess-only test helper. No fault-injection switches exist in the
+    // production binary. The parent kills us while holding the real writer lock.
+    #[test]
+    fn crash_helper() {
+        let Some(root) = std::env::var_os("KEEPER_TEST_CRASH_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let guard = InitGuard::acquire(&root).unwrap();
+        if std::env::var("KEEPER_TEST_CRASH_STAGE").unwrap() == "after" {
+            guard.publish(&Catalog::new()).unwrap();
+        } else {
+            let staging = tempfile::Builder::new()
+                .prefix(".init-")
+                .tempdir_in(&guard.dir)
+                .unwrap();
+            fs::write(staging.path().join("paths.tsv"), b"incomplete").unwrap();
+            // Deliberately leak ownership: SIGKILL must not rely on destructors.
+            std::mem::forget(staging);
+        }
+        println!("CRASH_TEST_READY");
+        std::io::stdout().flush().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn process_death_before_and_after_publication_leaves_no_partial_catalog() {
+        use std::{
+            io::{BufRead, BufReader},
+            process::{Command, Stdio},
+        };
+        struct KillOnDrop(std::process::Child);
+        impl Drop for KillOnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        for stage in ["before", "after"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut child = KillOnDrop(
+                Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "catalog::tests::crash_helper", "--nocapture"])
+                    .env("KEEPER_TEST_CRASH_ROOT", tmp.path())
+                    .env("KEEPER_TEST_CRASH_STAGE", stage)
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            );
+            let reader = BufReader::new(child.0.stdout.take().unwrap());
+            let ready = reader
+                .lines()
+                .any(|line| line.unwrap().contains("CRASH_TEST_READY"));
+            assert!(ready, "child failed before reaching crash point");
+            child.0.kill().unwrap();
+            child.0.wait().unwrap();
+            if stage == "before" {
+                assert!(!tmp.path().join(".keeper/catalog").exists());
+                let guard = InitGuard::acquire(tmp.path()).unwrap();
+                guard.publish(&Catalog::new()).unwrap();
+            }
+            assert_eq!(load(tmp.path()).unwrap(), Catalog::new());
+            assert!(InitGuard::acquire(tmp.path()).is_err()); // never rebaseline
+        }
+    }
+
     #[test]
     fn writer_lock_is_exclusive() {
         let tmp = tempfile::tempdir().unwrap();
