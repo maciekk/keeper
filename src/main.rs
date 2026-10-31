@@ -353,6 +353,7 @@ fn scan_session(
                 ),
                 color,
             )?;
+            writeln!(out)?;
             out.flush()?;
             let catalog = scan::hash_inventory_checkpointed(root, inventory, progress, Some(work))?;
             writeln!(
