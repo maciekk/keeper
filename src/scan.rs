@@ -24,6 +24,13 @@ pub struct Inventory {
 }
 
 impl Inventory {
+    pub fn file_sizes(&self) -> BTreeMap<Vec<u8>, u64> {
+        self.files
+            .iter()
+            .map(|(path, meta)| (path.clone(), meta.len()))
+            .collect()
+    }
+
     pub fn file_count(&self) -> u64 {
         self.files.len() as u64
     }

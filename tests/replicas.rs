@@ -7,8 +7,13 @@ use std::{
 };
 
 fn run(args: &[&str], roots: &[&Path], code: i32) -> Output {
-    cargo_bin_cmd!("keeper")
-        .args(args)
+    // These detailed-report tests exercise individual file records.
+    let mut command = cargo_bin_cmd!("keeper");
+    command.args(args);
+    if args.first() == Some(&"compare") {
+        command.arg("--long");
+    }
+    command
         .args(roots)
         .timeout(std::time::Duration::from_secs(10))
         .assert()
