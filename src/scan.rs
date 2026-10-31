@@ -199,11 +199,13 @@ pub fn hash_inventory_checkpointed(
         {
             Some(entry) => entry,
             None => {
+                progress.begin_file(meta.len());
                 let entry = hash_file(&path, meta, |n| {
                     progress.advance(0, n)?;
                     Ok(())
                 })
                 .with_context(|| format!("hash {}", label(relative)))?;
+                progress.end_file();
                 if let Some(work) = checkpoint.as_mut() {
                     work.record(relative, meta, &entry)?;
                 }
