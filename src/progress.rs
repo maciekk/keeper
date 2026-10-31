@@ -4,6 +4,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+// Avoid adding a second indicator for the usual small-file workload.
+const LARGE_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+struct FileProgress {
+    size: u64,
+    read: u64,
+    started: Instant,
+}
+
 pub struct Progress<'a> {
     out: &'a mut dyn Write,
     enabled: bool,
@@ -17,6 +26,7 @@ pub struct Progress<'a> {
     files: u64,
     bytes: u64,
     totals: Option<(u64, u64)>,
+    current_file: Option<FileProgress>,
 }
 
 impl<'a> Progress<'a> {
@@ -34,6 +44,7 @@ impl<'a> Progress<'a> {
             files: 0,
             bytes: 0,
             totals: None,
+            current_file: None,
         }
     }
 
@@ -63,13 +74,30 @@ impl<'a> Progress<'a> {
         self.files = 0;
         self.bytes = 0;
         self.totals = totals;
+        self.current_file = None;
         self.report("started")
+    }
+
+    pub fn begin_file(&mut self, size: u64) {
+        self.current_file =
+            (self.enabled && self.terminal && size >= LARGE_FILE_BYTES).then(|| FileProgress {
+                size,
+                read: 0,
+                started: Instant::now(),
+            });
+    }
+
+    pub fn end_file(&mut self) {
+        self.current_file = None;
     }
 
     pub fn advance(&mut self, files: u64, bytes: u64) -> io::Result<()> {
         crate::cancel::check()?;
         self.files += files;
         self.bytes += bytes;
+        if let Some(file) = &mut self.current_file {
+            file.read += bytes;
+        }
         if self.last.elapsed() >= Duration::from_secs(1) {
             self.report("running")?;
             self.last = Instant::now();
@@ -78,6 +106,7 @@ impl<'a> Progress<'a> {
     }
 
     pub fn finish(&mut self) -> io::Result<()> {
+        self.end_file();
         self.report("completed")
     }
 
@@ -136,13 +165,34 @@ impl<'a> Progress<'a> {
                 )?;
             }
         }
-        // All progress text is ASCII. Avoid wrapping, which would leave stale
-        // rows behind even when the current terminal line is cleared.
-        if self.terminal
-            && let Some(columns) = terminal_columns()
+        let mut suffix = Vec::new();
+        if state == "running"
+            && let Some(file) = &self.current_file
+            && file.started.elapsed() >= Duration::from_secs(1)
         {
-            fit_line(&mut line, columns);
+            let fraction = (file.read as f64 / file.size as f64).clamp(0.0, 1.0);
+            let filled = (fraction * 10.0).floor() as usize;
+            write!(
+                suffix,
+                "; file [{}{}] {:.1}% {}/{}",
+                "=".repeat(filled),
+                "-".repeat(10 - filled),
+                fraction * 100.0,
+                crate::display::bytes(file.read),
+                crate::display::bytes(file.size)
+            )?;
         }
+        // Keep the suffix at the end. On narrower terminals shorten the overall
+        // line first, rather than letting its prefix push the file bar offscreen.
+        fit_progress(
+            &mut line,
+            &suffix,
+            if self.terminal {
+                terminal_columns()
+            } else {
+                None
+            },
+        );
         let text = String::from_utf8(line).expect("progress is ASCII");
         self.out.write_all(
             crate::display::progress_line(&text, self.color, state == "completed").as_bytes(),
@@ -163,6 +213,18 @@ fn terminal_columns() -> Option<usize> {
         (columns > 0).then_some(columns)
     } else {
         None
+    }
+}
+
+fn fit_progress(line: &mut Vec<u8>, suffix: &[u8], columns: Option<usize>) {
+    match columns {
+        // Very narrow terminals retain the existing compact overall progress.
+        Some(columns) if columns < suffix.len() + 24 => fit_line(line, columns),
+        Some(columns) => {
+            fit_line(line, columns - suffix.len());
+            line.extend_from_slice(suffix);
+        }
+        None => line.extend_from_slice(suffix),
     }
 }
 
@@ -196,6 +258,69 @@ mod tests {
         assert_eq!(line, b"Hashing:...");
         fit_line(&mut line, 1);
         assert!(line.is_empty());
+    }
+
+    #[test]
+    fn large_file_bar_tracks_bytes_and_clears_between_files() {
+        let mut output = Vec::new();
+        let mut progress = Progress::new(&mut output, true).terminal(true);
+        let size = LARGE_FILE_BYTES * 4;
+        progress.begin("Hashing", Some((2, size * 2))).unwrap();
+        progress.begin_file(size);
+        progress.current_file.as_mut().unwrap().started -= Duration::from_secs(2);
+        progress.advance(0, size / 2).unwrap();
+        progress.report("running").unwrap();
+        assert_eq!(progress.files, 0);
+        assert_eq!(progress.current_file.as_ref().unwrap().read, size / 2);
+        progress.end_file();
+        progress.advance(1, 0).unwrap();
+        progress.begin_file(42);
+        assert!(progress.current_file.is_none());
+        progress.report("running").unwrap();
+        drop(progress);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("; file [=====-----] 50.0% 512.00 MiB/1.00 GiB"));
+        assert!(output.find("; ETA=").unwrap() < output.find("; file [").unwrap());
+        assert_eq!(output.matches("; file [").count(), 1);
+    }
+
+    #[test]
+    fn file_bar_waits_for_a_long_read_and_never_appears_in_redirected_logs() {
+        for terminal in [false, true] {
+            let mut output = Vec::new();
+            let mut progress = Progress::new(&mut output, true).terminal(terminal);
+            progress
+                .begin("Hashing", Some((1, LARGE_FILE_BYTES)))
+                .unwrap();
+            progress.begin_file(LARGE_FILE_BYTES);
+            progress.report("running").unwrap();
+            progress.finish().unwrap();
+            assert!(progress.current_file.is_none());
+            drop(progress);
+            assert!(!String::from_utf8(output).unwrap().contains("; file ["));
+        }
+        let mut output = Vec::new();
+        let mut progress = Progress::new(&mut output, false).terminal(true);
+        progress.begin_file(LARGE_FILE_BYTES);
+        assert!(progress.current_file.is_none());
+    }
+
+    #[test]
+    fn file_bar_remains_visible_without_wrapping_on_smaller_terminals() {
+        let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; ETA=2h";
+        let suffix = b"; file [=====-----] 50.0% 512.00 MiB/1.00 GiB";
+        let mut line = base.to_vec();
+        fit_progress(&mut line, suffix, Some(100));
+        assert!(line.len() < 100);
+        assert!(line.ends_with(suffix));
+        let mut line = base.to_vec();
+        fit_progress(&mut line, suffix, Some(20));
+        assert!(line.len() < 20);
+        assert!(!line.windows(6).any(|part| part == b"file ["));
+        let mut line = base.to_vec();
+        fit_progress(&mut line, suffix, None);
+        assert!(line.starts_with(base));
+        assert!(line.ends_with(suffix));
     }
 
     #[test]
