@@ -140,21 +140,21 @@ impl<'a> Progress<'a> {
             }
             write!(
                 line,
-                "; files={}/{}; read={}/{}; {:.1} MiB/s; elapsed={}",
+                "; elapsed={}; files={}/{}; read={}/{}; {:.1} MiB/s",
+                crate::display::duration(elapsed),
                 crate::display::number(self.files),
                 crate::display::number(files),
                 crate::display::bytes(self.bytes),
                 crate::display::bytes(bytes),
-                self.bytes as f64 / elapsed.max(0.001) / 1048576.0,
-                crate::display::duration(elapsed)
+                self.bytes as f64 / elapsed.max(0.001) / 1048576.0
             )?;
         } else {
             write!(
                 line,
-                "; files={}; inventoried={}; elapsed={}",
+                "; elapsed={}; files={}; inventoried={}",
+                crate::display::duration(elapsed),
                 crate::display::number(self.files),
-                crate::display::bytes(self.bytes),
-                crate::display::duration(elapsed)
+                crate::display::bytes(self.bytes)
             )?;
         }
         let mut bar = Vec::new();
@@ -317,6 +317,16 @@ mod tests {
         assert!(output.contains("; [*****.....]"));
         assert!(output.find("; ETA=").unwrap() < output.find("; [").unwrap());
         assert_eq!(output.matches("; [").count(), 1);
+        let active = output
+            .split("\r\x1b[2K")
+            .find(|line| line.contains("[*****.....]"))
+            .unwrap();
+        let percent = active.find("25.0%").unwrap();
+        let eta = active.find("ETA=").unwrap();
+        let bar = active.find("[*****.....]").unwrap();
+        let elapsed = active.find("elapsed=").unwrap();
+        let files = active.find("files=").unwrap();
+        assert!(percent < eta && eta < bar && bar < elapsed && elapsed < files);
         assert!(!output.contains("512.00 MiB/1.00 GiB"));
     }
 
@@ -436,7 +446,7 @@ mod tests {
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
         assert!(text.contains(&format!(
-            "Hashing: completed; 100.0%; {}; files=",
+            "Hashing: completed; 100.0%; {}; elapsed=",
             " ".repeat(12)
         )));
         assert!(text.ends_with('\n'));
@@ -455,6 +465,20 @@ mod tests {
         assert!(text.contains("elapsed=3h"));
         assert!(text.contains("ETA=3h"));
         assert!(!text.contains("9490s"));
+    }
+
+    #[test]
+    fn preflight_elapsed_precedes_counts() {
+        let mut output = Vec::new();
+        let mut progress = Progress::new(&mut output, true);
+        progress.begin("Preflight", None).unwrap();
+        progress.advance(1, 42).unwrap();
+        progress.finish().unwrap();
+        drop(progress);
+        let output = String::from_utf8(output).unwrap();
+        for line in output.lines() {
+            assert!(line.find("elapsed=").unwrap() < line.find("files=").unwrap());
+        }
     }
 
     #[test]
@@ -509,7 +533,8 @@ mod tests {
         progress.finish().unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("Hashing: completed; 100.0%; files=1/1; read=42 B/42 B"));
+        assert!(text.contains("Hashing: completed; 100.0%; elapsed="));
+        assert!(text.contains("; files=1/1; read=42 B/42 B"));
         let mut output = Vec::new();
         let mut progress = Progress::new(&mut output, false);
         progress.begin("Preflight", None).unwrap();
