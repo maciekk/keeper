@@ -122,16 +122,21 @@ errors, and redirected output. The opening separator is written to stdout before
 any progress or diagnostics; progress phases do not add another leading blank line.
 
 - `--progress auto|always|never`: default `auto` enables progress only on a
-  terminal. Terminal updates replace the current line; phase lines stay contiguous. Hashing reports throughput, percentage, and ETA
-  when totals are known, including within large files. ETA and elapsed time each
-  use a single rounded figure: seconds below 2 minutes, minutes below 2 hours,
+  terminal. Terminal updates replace the current line; phase lines stay contiguous.
+  Hashing puts percentage and ETA immediately
+  after the phase/state, ahead of file counts, byte counts, throughput, and elapsed
+  time. Percentage and ETA take priority when fitting narrow terminals, including
+  within large files. ETA and elapsed time each use a single rounded figure:
+  seconds below 2 minutes, minutes below 2 hours,
   then hours (`119s`, `115m`, `2h`). For files of at least 256 MiB taking more than a
-  second to read, terminal progress appends a compact per-file star bar after the
-  overall ETA, without extra per-file statistics. Filled stars are green when
-  colour is enabled. The bar clears when the file finishes and does not appear in
-  redirected logs or for checkpoint-reused files. ETA is never truncated: other
-  fields are shortened first, and the bar is omitted if needed. If the terminal is
-  narrower than the ETA itself, the complete ETA takes priority over fitting.
+  second to read, terminal progress shows a compact per-file star bar immediately
+  after ETA, before the counts, without extra per-file statistics. Filled stars are
+  green when colour is enabled. A same-width blank slot replaces inactive bars,
+  including for small or checkpoint-reused files, so later fields do not shift.
+  Redirected logs have neither a bar nor a placeholder. ETA is never truncated:
+  other fields are shortened first, and the entire bar slot is omitted if needed.
+  If the terminal is narrower than the ETA itself, the complete ETA takes priority
+  over fitting.
 - Forced redirected progress records phase starts/completions without terminal
   controls or repetitive updates.
 - `--color auto|always|never`: automatic colour checks stdout and stderr separately;

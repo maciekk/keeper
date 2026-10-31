@@ -171,7 +171,10 @@ fn progress_is_on_stderr_and_can_be_disabled() {
     fs::write(tmp.path().join("a"), vec![0; 300_001]).unwrap();
     let result = run(&["init", "--progress", "always"], &[tmp.path()], 0);
     assert!(stderr(&result).contains("Preflight: completed"));
-    assert!(stderr(&result).contains("Hashing: completed; files=1/1; read=292.97 KiB/292.97 KiB"));
+    assert!(
+        stderr(&result)
+            .contains("Hashing: completed; 100.0%; files=1/1; read=292.97 KiB/292.97 KiB")
+    );
     assert!(!stdout(&result).contains("Hashing:"));
     let result = run(&["status", "--progress", "never"], &[tmp.path()], 0);
     assert!(result.stderr.is_empty());
