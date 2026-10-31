@@ -13,7 +13,7 @@ Keep original assets in ordinary application-neutral files. Keeper and any curre
 editor, validator, or backup program should remain replaceable clients of that data.
 
 Rust was chosen both as a learning project and for practical systems-tooling
-reasons; see [the README rationale](../README.md#why-rust). Learning is not a reason
+reasons; see [the development rationale](development.md#why-rust). Learning is not a reason
 to add architectural complexity or compromise integrity guarantees.
 
 ## 2. Observe, compare, and accept are separate actions
