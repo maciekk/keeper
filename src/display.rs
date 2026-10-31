@@ -50,6 +50,24 @@ pub fn bytes(value: u64) -> String {
     }
 }
 
+/// Human-facing elapsed times and estimates; retain tenths for short operations.
+pub fn duration(seconds: f64) -> String {
+    let total = seconds.round() as u64;
+    if total < 60 {
+        return format!("{seconds:.1}s");
+    }
+    let mut remaining = total;
+    let mut parts = Vec::new();
+    for (unit, suffix) in [(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")] {
+        let value = remaining / unit;
+        remaining %= unit;
+        if value > 0 {
+            parts.push(format!("{value}{suffix}"));
+        }
+    }
+    parts.join(" ")
+}
+
 pub fn label(text: &str, color: bool) -> String {
     if !color {
         return text.to_owned();
@@ -290,6 +308,24 @@ mod tests {
         assert!(output.contains(&format!("\x1b[0;34m{root}")));
         assert!(output.contains("123  1.23 TiB"));
         assert!(!output.contains("..."));
+    }
+
+    #[test]
+    fn readable_durations_cover_seconds_through_days() {
+        for (seconds, expected) in [
+            (0.0, "0.0s"),
+            (0.4, "0.4s"),
+            (12.3, "12.3s"),
+            (59.96, "1m"),
+            (60.0, "1m"),
+            (61.0, "1m 1s"),
+            (3_600.0, "1h"),
+            (9_490.0, "2h 38m 10s"),
+            (86_400.0, "1d"),
+            (90_061.0, "1d 1h 1m 1s"),
+        ] {
+            assert_eq!(duration(seconds), expected);
+        }
     }
 
     #[test]

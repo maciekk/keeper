@@ -115,7 +115,9 @@ changes in metadata-only mode.
 - `--progress auto|always|never`: default `auto` enables progress only on a
   terminal. Terminal updates replace the current line; one leading blank line
   precedes contiguous phase lines. Hashing reports throughput, percentage, and ETA
-  when totals are known, including within large files.
+  when totals are known, including within large files. ETA and elapsed time use
+  human-friendly durations (for example, `2h 38m 10s` or `1d 3h`); short runs
+  retain tenths of a second.
 - Forced redirected progress records phase starts/completions without terminal
   controls or repetitive updates.
 - `--color auto|always|never`: automatic colour checks stdout and stderr separately;

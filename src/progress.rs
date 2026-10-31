@@ -98,7 +98,7 @@ impl<'a> Progress<'a> {
         match self.totals {
             Some((files, bytes)) => write!(
                 line,
-                "{}{}: {state}; files={}/{}; read={}/{}; {:.1} MiB/s; elapsed={:.1}s",
+                "{}{}: {state}; files={}/{}; read={}/{}; {:.1} MiB/s; elapsed={}",
                 self.scope,
                 self.phase,
                 crate::display::number(self.files),
@@ -106,16 +106,16 @@ impl<'a> Progress<'a> {
                 crate::display::bytes(self.bytes),
                 crate::display::bytes(bytes),
                 self.bytes as f64 / elapsed.max(0.001) / 1048576.0,
-                elapsed
+                crate::display::duration(elapsed)
             )?,
             None => write!(
                 line,
-                "{}{}: {state}; files={}; inventoried={}; elapsed={:.1}s",
+                "{}{}: {state}; files={}; inventoried={}; elapsed={}",
                 self.scope,
                 self.phase,
                 crate::display::number(self.files),
                 crate::display::bytes(self.bytes),
-                elapsed
+                crate::display::duration(elapsed)
             )?,
         }
         if let Some((files, bytes)) = self.totals {
@@ -129,7 +129,11 @@ impl<'a> Progress<'a> {
             .clamp(0.0, 1.0);
             write!(line, "; {:.1}%", fraction * 100.0)?;
             if fraction > 0.0 && fraction < 1.0 {
-                write!(line, "; ETA={:.0}s", elapsed * (1.0 - fraction) / fraction)?;
+                write!(
+                    line,
+                    "; ETA={}",
+                    crate::display::duration(elapsed * (1.0 - fraction) / fraction)
+                )?;
             }
         }
         // All progress text is ASCII. Avoid wrapping, which would leave stale
@@ -210,6 +214,21 @@ mod tests {
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
         assert!(text.ends_with("100.0%\n"));
+    }
+
+    #[test]
+    fn long_running_progress_formats_eta_and_elapsed_as_durations() {
+        let mut output = Vec::new();
+        let mut progress = Progress::new(&mut output, true).terminal(true);
+        progress.begin("Hashing", Some((2, 200))).unwrap();
+        progress.advance(1, 100).unwrap();
+        progress.started = Instant::now() - Duration::from_secs(9_490);
+        progress.report("running").unwrap();
+        drop(progress);
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("elapsed=2h 38m 10s"));
+        assert!(text.contains("ETA=2h 38m 10s"));
+        assert!(!text.contains("9490s"));
     }
 
     #[test]
