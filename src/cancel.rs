@@ -22,11 +22,30 @@ pub fn install() -> std::io::Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("cancelled; when using --resume, completed files are retained for the same command; current file must be reread")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+pub fn is_cancellation(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.is::<Cancelled>()
+            || cause
+                .downcast_ref::<std::io::Error>()
+                .and_then(std::io::Error::get_ref)
+                .is_some_and(|inner| inner.is::<Cancelled>())
+    })
+}
+
 pub fn check() -> std::io::Result<()> {
     if CANCELLED.load(Ordering::Relaxed) {
-        Err(std::io::Error::other(
-            "cancelled; when using --resume, completed files are retained for the same command; current file must be reread",
-        ))
+        Err(std::io::Error::other(Cancelled))
     } else {
         Ok(())
     }
