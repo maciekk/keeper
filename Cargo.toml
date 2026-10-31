@@ -1,6 +1,6 @@
 [package]
 name = "keeper"
-version = "2.0.0-dev.1"
+version = "2.0.0-dev.2"
 edition = "2024"
 description = "An inspectable, content-addressed integrity catalog for ordinary files"
 publish = false
