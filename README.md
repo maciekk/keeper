@@ -30,6 +30,8 @@ Implemented:
   paths/content, without requiring, using, or updating catalogs.
 - Progress and throughput on stderr, including within large files. Use
   `--progress auto|always|never` (default: auto, enabled only on a terminal).
+- Discoverable command syntax in `--help`; `help` is equivalent, and
+  `help <command>` (including `help catalog check`) provides focused details.
 - Full BLAKE3 IDs, reversible Unix filename encoding, deduplicated object records.
 - Exclusive writer locking, synced staging, atomic no-replace publication.
 - Fail closed on read errors, detected concurrent mutations, unsupported filesystem
@@ -67,6 +69,10 @@ checkout:
 cargo build --release --locked
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
+
+./target/release/keeper --help
+./target/release/keeper help compare
+./target/release/keeper help catalog check
 
 # Use an existing dataset directory, not the Keeper source checkout.
 ./target/release/keeper preflight /path/to/small-test-dataset
