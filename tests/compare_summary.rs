@@ -137,8 +137,8 @@ fn explanatory_notes_are_dim_and_plain_reports_have_no_escapes() {
         .stdout
         .clone();
     let colored = String::from_utf8(output).unwrap();
-    assert!(colored.contains(&format!("\x1b[36m{}", left.path().display())));
-    assert!(colored.contains("\x1b[36m."));
+    assert!(colored.contains(&format!("\x1b[0;34m{}", left.path().display())));
+    assert!(colored.contains("\x1b[0;34m."));
     assert!(colored.contains("\x1b[2m- Paths + sizes only"));
     assert!(colored.contains("\x1b[2m- File counts by direct parent"));
     assert!(colored.contains("\x1b[2m- Junk ="));

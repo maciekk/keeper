@@ -68,8 +68,7 @@ Comparison reports have dedicated sections, with uppercase headings:
 
 Inventory rows identify supplied roots in the first column, in left/right argument
 order. Root labels remain full-length; numeric columns shift right for long paths.
-Paths in inventory and directory tables have a restrained colour accent when
-colour is enabled. Each differing
+Paths in inventory and directory tables use normal-intensity ANSI blue (`0;34`) when colour is enabled. Each differing
 file is counted once under its immediate parent directory (`.` for root-level
 files). The directory path is the first column, followed by the counts.
 Directory counts are not recursive totals and do not imply that directory

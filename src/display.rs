@@ -141,7 +141,7 @@ fn table_with_width(
                     && color
                     && (headers[index].starts_with("Root") || headers[index] == "Directory")
                 {
-                    format!("\x1b[36m{cell}\x1b[0m")
+                    format!("\x1b[0;34m{cell}\x1b[0m")
                 } else {
                     cell
                 }
@@ -266,7 +266,7 @@ mod tests {
         .unwrap();
         let narrow = String::from_utf8(narrow).unwrap();
         assert!(narrow.starts_with("\x1b[2m"));
-        assert!(narrow.contains("     1  \x1b[36mphotos/a-ver..."));
+        assert!(narrow.contains("     1  \x1b[0;34mphotos/a-ver..."));
         assert!(!narrow.contains("long-directory"));
         assert_eq!(dim("note", false), "note");
         assert_eq!(dim("note", true), "\x1b[2mnote\x1b[0m");
@@ -287,7 +287,7 @@ mod tests {
         )
         .unwrap();
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains(&format!("\x1b[36m{root}")));
+        assert!(output.contains(&format!("\x1b[0;34m{root}")));
         assert!(output.contains("123  1.23 TiB"));
         assert!(!output.contains("..."));
     }
