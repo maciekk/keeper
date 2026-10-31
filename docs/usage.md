@@ -132,8 +132,9 @@ any progress or diagnostics; progress phases do not add another leading blank li
   then hours (`119s`, `115m`, `2h`). For files of at least 256 MiB taking more than a
   second to read, terminal progress shows a compact per-file star bar immediately
   after ETA, before the counts, without extra per-file statistics. Filled stars are
-  green when colour is enabled. A same-width blank slot replaces inactive bars,
-  including for small or checkpoint-reused files, so later fields do not shift.
+  green when colour is enabled. A ` | ` separator follows the bar slot before
+  the counts. A same-width whitespace-only slot replaces inactive bars, including
+  for small or checkpoint-reused files, so later fields do not shift.
   Redirected logs have neither a bar nor a placeholder. ETA is never truncated:
   other fields are shortened first, and the entire bar slot is omitted if needed.
   If the terminal is narrower than the ETA itself, the complete ETA takes priority

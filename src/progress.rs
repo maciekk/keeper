@@ -172,7 +172,6 @@ impl<'a> Progress<'a> {
                 write!(bar, "; [{}{}]", "*".repeat(filled), ".".repeat(10 - filled))?;
             } else {
                 // Same visible width as "; [**********]", without an active bar.
-                bar.extend_from_slice(b"; ");
                 bar.resize(14, b' ');
             }
         }
@@ -226,6 +225,9 @@ fn fit_progress(line: &mut Vec<u8>, bar: &[u8], columns: Option<usize>) {
         position += part.len() + 1;
     }
     let mut details = line.split_off(priority_end);
+    if !bar.is_empty() && details.starts_with(b"; ") {
+        details.splice(..2, b" | ".iter().copied());
+    }
     let Some(columns) = columns else {
         line.extend_from_slice(bar);
         line.extend_from_slice(&details);
@@ -364,7 +366,7 @@ mod tests {
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(100));
         assert!(line.len() < 100);
-        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....]; files="));
+        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....] | files="));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(20));
         assert!(line.len() < 20);
@@ -372,7 +374,7 @@ mod tests {
         assert!(line.ends_with(b"; ETA=2h"));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, None);
-        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....]; files="));
+        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....] | files="));
         assert!(line.ends_with(b"read=1.00 GiB/20.00 GiB"));
         assert!(line.starts_with(b"Hashing: running; elapsed=1h; 5.0%"));
     }
@@ -382,8 +384,7 @@ mod tests {
         let base =
             b"Hashing: running; elapsed=5m; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB";
         let bar = b"; [*****.....]";
-        let mut placeholder = b"; ".to_vec();
-        placeholder.resize(bar.len(), b' ');
+        let placeholder = vec![b' '; bar.len()];
         for width in [Some(40), Some(60), Some(80), Some(160), None] {
             let mut active = base.to_vec();
             let mut absent = base.to_vec();
@@ -452,7 +453,8 @@ mod tests {
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
         assert!(text.contains("Hashing: completed; elapsed="));
-        assert!(text.contains(&format!("; 100.0%; {}; files=", " ".repeat(12))));
+        assert!(text.contains(&format!("; 100.0%{} | files=", " ".repeat(14))));
+        assert!(!text.contains(";             "));
         assert!(text.ends_with('\n'));
     }
 
