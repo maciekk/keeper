@@ -140,7 +140,7 @@ impl<'a> Progress<'a> {
             if fraction > 0.0 && fraction < 1.0 {
                 write!(
                     line,
-                    "; ETA={}",
+                    "; eta={}",
                     crate::display::duration(elapsed * (1.0 - fraction) / fraction)
                 )?;
             }
@@ -218,7 +218,7 @@ fn fit_progress(line: &mut Vec<u8>, bar: &[u8], columns: Option<usize>) {
         if value.ends_with(b"%") {
             percentage = Some(value.to_vec());
             priority_end = position + part.len();
-        } else if value.starts_with(b"ETA=") {
+        } else if value.starts_with(b"eta=") {
             eta = Some(value.to_vec());
             priority_end = position + part.len();
         }
@@ -320,16 +320,16 @@ mod tests {
         drop(progress);
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("Hashing: running; elapsed="));
-        assert!(output.contains("; 25.0%; ETA="));
+        assert!(output.contains("; 25.0%; eta="));
         assert!(output.contains("; [*****.....]"));
-        assert!(output.find("; ETA=").unwrap() < output.find("; [").unwrap());
+        assert!(output.find("; eta=").unwrap() < output.find("; [").unwrap());
         assert_eq!(output.matches("; [").count(), 1);
         let active = output
             .split("\r\x1b[2K")
             .find(|line| line.contains("[*****.....]"))
             .unwrap();
         let percent = active.find("25.0%").unwrap();
-        let eta = active.find("ETA=").unwrap();
+        let eta = active.find("eta=").unwrap();
         let bar = active.find("[*****.....]").unwrap();
         let elapsed = active.find("elapsed=").unwrap();
         let files = active.find("files=").unwrap();
@@ -361,20 +361,20 @@ mod tests {
     #[test]
     fn file_bar_remains_visible_without_wrapping_on_smaller_terminals() {
         let base =
-            b"Hashing: running; elapsed=1h; 5.0%; ETA=2h; files=123/1000; read=1.00 GiB/20.00 GiB";
+            b"Hashing: running; elapsed=1h; 5.0%; eta=2h; files=123/1000; read=1.00 GiB/20.00 GiB";
         let suffix = b"; [*****.....]";
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(100));
         assert!(line.len() < 100);
-        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....] | files="));
+        assert!(String::from_utf8_lossy(&line).contains("eta=2h; [*****.....] | files="));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(20));
         assert!(line.len() < 20);
         assert!(!line.windows(3).any(|part| part == b"; ["));
-        assert!(line.ends_with(b"; ETA=2h"));
+        assert!(line.ends_with(b"; eta=2h"));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, None);
-        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....] | files="));
+        assert!(String::from_utf8_lossy(&line).contains("eta=2h; [*****.....] | files="));
         assert!(line.ends_with(b"read=1.00 GiB/20.00 GiB"));
         assert!(line.starts_with(b"Hashing: running; elapsed=1h; 5.0%"));
     }
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn bar_and_placeholder_reserve_identical_columns() {
         let base =
-            b"Hashing: running; elapsed=5m; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB";
+            b"Hashing: running; elapsed=5m; 50.0%; eta=115m; files=1/20; read=1.00 GiB/2.00 GiB";
         let bar = b"; [*****.....]";
         let placeholder = vec![b' '; bar.len()];
         for width in [Some(40), Some(60), Some(80), Some(160), None] {
@@ -397,7 +397,7 @@ mod tests {
                 assert_eq!(active.find(key), absent.find(key), "width={width:?}");
             }
             if active.contains("[*****.....]") {
-                assert!(active.find("[*****.....]").unwrap() > active.find("ETA=").unwrap());
+                assert!(active.find("[*****.....]").unwrap() > active.find("eta=").unwrap());
                 if let Some(index) = active.find("files=") {
                     assert!(active.find("[*****.....]").unwrap() < index);
                 }
@@ -407,15 +407,15 @@ mod tests {
 
     #[test]
     fn eta_is_never_shortened_with_or_without_a_file_bar() {
-        let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; ETA=2h 38m 10s";
+        let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; eta=2h 38m 10s";
         let bar = b"; [*****.....]";
         for suffix in [bar.as_slice(), b"".as_slice()] {
             for columns in 1..200 {
                 let mut line = base.to_vec();
                 fit_progress(&mut line, suffix, Some(columns));
                 let line = String::from_utf8(line).unwrap();
-                assert!(line.contains("ETA=2h 38m 10s"), "width={columns}: {line}");
-                if columns > "ETA=2h 38m 10s".len() + 2 {
+                assert!(line.contains("eta=2h 38m 10s"), "width={columns}: {line}");
+                if columns > "eta=2h 38m 10s".len() + 2 {
                     assert!(line.len() < columns, "width={columns}: {line}");
                 }
             }
@@ -424,15 +424,15 @@ mod tests {
 
     #[test]
     fn percentage_and_eta_precede_details_and_survive_narrow_layouts() {
-        let base = b"Left Hashing: running; elapsed=5m; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB";
+        let base = b"Left Hashing: running; elapsed=5m; 50.0%; eta=115m; files=1/20; read=1.00 GiB/2.00 GiB";
         for width in [32, 40, 60, 80, 120] {
             let mut line = base.to_vec();
             fit_progress(&mut line, b"; [*****.....]", Some(width));
             let text = String::from_utf8(line).unwrap();
-            assert!(text.contains("50.0%; ETA=115m"), "{width}: {text}");
+            assert!(text.contains("50.0%; eta=115m"), "{width}: {text}");
             assert!(text.len() < width);
             if text.contains("files=") {
-                assert!(text.find("ETA=").unwrap() < text.find("files=").unwrap());
+                assert!(text.find("eta=").unwrap() < text.find("files=").unwrap());
             }
         }
     }
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(text.matches('\n').count(), 1);
         assert!(text.starts_with("\r\x1b[2K"));
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
-        assert!(text.contains("50.0%; ETA="));
+        assert!(text.contains("50.0%; eta="));
         assert!(text.contains("Hashing: completed; elapsed="));
         assert!(text.contains(&format!("; 100.0%{} | files=", " ".repeat(14))));
         assert!(!text.contains(";             "));
@@ -469,7 +469,7 @@ mod tests {
         drop(progress);
         let text = String::from_utf8(output).unwrap();
         assert!(text.contains("elapsed=3h"));
-        assert!(text.contains("ETA=3h"));
+        assert!(text.contains("eta=3h"));
         assert!(!text.contains("9490s"));
     }
 
