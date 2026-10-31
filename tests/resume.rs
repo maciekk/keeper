@@ -125,9 +125,10 @@ fn checkpoint_preamble_is_dimmed_only_when_colour_is_enabled() {
             let report = String::from_utf8(result).unwrap();
             if color == "always" {
                 assert!(report.contains("\x1b[2mScope: checkpointed"));
-                assert!(report.contains("Keep writers stopped throughout the session.\x1b[0m"));
+                assert!(report.contains("Keep writers stopped throughout the session.\x1b[0m\n\n"));
             } else {
                 assert!(report.contains("Scope: checkpointed"));
+                assert!(report.contains("Keep writers stopped throughout the session.\n\n"));
                 assert!(!report.contains('\x1b'));
             }
         }
