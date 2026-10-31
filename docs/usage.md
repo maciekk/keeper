@@ -115,9 +115,9 @@ changes in metadata-only mode.
 - `--progress auto|always|never`: default `auto` enables progress only on a
   terminal. Terminal updates replace the current line; one leading blank line
   precedes contiguous phase lines. Hashing reports throughput, percentage, and ETA
-  when totals are known, including within large files. ETA and elapsed time use
-  human-friendly durations (for example, `2h 38m 10s` or `1d 3h`); short runs
-  retain tenths of a second. For files of at least 256 MiB taking more than a
+  when totals are known, including within large files. ETA and elapsed time each
+  use a single rounded figure: seconds below 2 minutes, minutes below 2 hours,
+  then hours (`119s`, `115m`, `2h`). For files of at least 256 MiB taking more than a
   second to read, terminal progress appends a compact per-file star bar after the
   overall ETA, without extra per-file statistics. Filled stars are green when
   colour is enabled. The bar clears when the file finishes and does not appear in

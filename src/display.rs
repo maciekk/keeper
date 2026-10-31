@@ -50,22 +50,15 @@ pub fn bytes(value: u64) -> String {
     }
 }
 
-/// Human-facing elapsed times and estimates; retain tenths for short operations.
+/// Single-unit elapsed time or ETA; promote only at two minutes or two hours.
 pub fn duration(seconds: f64) -> String {
-    let total = seconds.round() as u64;
-    if total < 60 {
-        return format!("{seconds:.1}s");
+    if seconds >= 7_200.0 {
+        format!("{:.0}h", seconds / 3_600.0)
+    } else if seconds >= 120.0 {
+        format!("{:.0}m", seconds / 60.0)
+    } else {
+        format!("{seconds:.0}s")
     }
-    let mut remaining = total;
-    let mut parts = Vec::new();
-    for (unit, suffix) in [(86_400, "d"), (3_600, "h"), (60, "m"), (1, "s")] {
-        let value = remaining / unit;
-        remaining %= unit;
-        if value > 0 {
-            parts.push(format!("{value}{suffix}"));
-        }
-    }
-    parts.join(" ")
 }
 
 pub fn label(text: &str, color: bool) -> String {
@@ -314,18 +307,19 @@ mod tests {
     }
 
     #[test]
-    fn readable_durations_cover_seconds_through_days() {
+    fn durations_use_one_unit_and_promote_only_at_two() {
         for (seconds, expected) in [
-            (0.0, "0.0s"),
-            (0.4, "0.4s"),
-            (12.3, "12.3s"),
-            (59.96, "1m"),
-            (60.0, "1m"),
-            (61.0, "1m 1s"),
-            (3_600.0, "1h"),
-            (9_490.0, "2h 38m 10s"),
-            (86_400.0, "1d"),
-            (90_061.0, "1d 1h 1m 1s"),
+            (0.0, "0s"),
+            (1.0, "1s"),
+            (60.0, "60s"),
+            (119.0, "119s"),
+            (120.0, "2m"),
+            (180.0, "3m"),
+            (3_600.0, "60m"),
+            (6_900.0, "115m"),
+            (7_200.0, "2h"),
+            (9_490.0, "3h"),
+            (86_400.0, "24h"),
         ] {
             assert_eq!(duration(seconds), expected);
         }
