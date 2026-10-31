@@ -43,7 +43,8 @@ fn init_check_and_status_preserve_baseline() {
     fs::create_dir(root.join("photos")).unwrap();
     fs::write(root.join("photos/a"), b"known bytes").unwrap();
     fs::write(root.join("deleted"), b"gone").unwrap();
-    assert!(output(&["init"], root, 0).contains("2 file(s)"));
+    let initial = output(&["init"], root, 0);
+    assert!(initial.contains("2 file(s)"));
     assert!(output(&["catalog", "check"], root, 0).contains("Catalog OK"));
     assert!(output(&["status"], root, 0).contains("0 added, 0 missing, 0 changed"));
     let baseline = metadata(root);
@@ -56,8 +57,30 @@ fn init_check_and_status_preserve_baseline() {
     assert!(report.contains("ADDED\tadded"));
     assert!(report.contains("1 added, 1 missing, 1 changed"));
     assert_eq!(metadata(root), baseline);
-    output(&["init"], root, 2);
-    assert_eq!(metadata(root), baseline);
+    for args in [&["init"][..], &["init", "--resume"][..]] {
+        let report = output(args, root, 0);
+        assert!(report.contains("Catalog already exists: 2 file(s). Baseline left unchanged."));
+        assert!(report.contains("Dataset bytes were not checked"));
+        let summary = initial
+            .split("Recorded data")
+            .nth(1)
+            .unwrap()
+            .split("Baseline records")
+            .next()
+            .unwrap();
+        assert_eq!(
+            report
+                .split("Recorded data")
+                .nth(1)
+                .unwrap()
+                .split("Dataset bytes")
+                .next()
+                .unwrap(),
+            summary
+        );
+        assert_eq!(metadata(root), baseline);
+        assert!(!root.join(".keeper/work").exists());
+    }
 }
 
 #[test]
@@ -164,6 +187,19 @@ fn missing_or_corrupt_catalog_is_an_error_not_a_clean_status() {
     fs::write(tmp.path().join(".keeper/catalog/paths.tsv"), b"corrupt").unwrap();
     output(&["catalog", "check"], tmp.path(), 2);
     output(&["status"], tmp.path(), 2);
+    let result = keeper(&["init"], tmp.path())
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    let error = String::from_utf8(result.stderr).unwrap();
+    assert!(error.contains("catalog already exists but could not be read"));
+    assert!(error.contains("catalog is invalid"));
+    assert!(!error.contains("or cannot be inspected"));
+    assert_eq!(
+        fs::read(tmp.path().join(".keeper/catalog/paths.tsv")).unwrap(),
+        b"corrupt"
+    );
 }
 
 #[test]

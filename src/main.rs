@@ -49,7 +49,7 @@ enum ProgressMode {
 enum Command {
     /// Record the current bytes as a baseline; does NOT certify that they are good.
     #[command(
-        long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. Refuses to overwrite an existing catalog. Root-level .keeperignore exclusions are recorded with the baseline. Stop dataset writers first.",
+        long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. If a catalog already exists, validates it and shows its recorded summary without rescanning or overwriting it. Root-level .keeperignore exclusions are recorded with the baseline. Stop dataset writers first.",
         after_help = "Examples:\n  keeper init /data/photos\n  keeper init /data/photos --resume\n\n--resume reuses checkpointed per-path reads; it is NOT a fresh full scrub."
     )]
     Init {
@@ -128,7 +128,23 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
     match cli.command {
         Command::Init { root: path, resume } => {
             let root = root(&path)?;
-            let guard = catalog::InitGuard::acquire(&root)?;
+            let guard = catalog::InitGuard::lock(&root)?;
+            if guard.catalog_exists()? {
+                let catalog = catalog::load(&root)
+                    .context("catalog already exists but could not be read; init never overwrites a baseline")?;
+                writeln!(
+                    out,
+                    "{}: {} file(s). Baseline left unchanged.",
+                    label("Catalog already exists", color),
+                    number(catalog.len())
+                )?;
+                display::summary(out, "Recorded data", &catalog, color)?;
+                writeln!(
+                    out,
+                    "Dataset bytes were not checked. Run keeper status to verify current bytes."
+                )?;
+                return Ok(0);
+            }
             let mut work = resume
                 .then(|| checkpoint::Checkpoint::open(&root, "init", None))
                 .transpose()?;
