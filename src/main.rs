@@ -21,7 +21,8 @@ use std::{
 #[derive(Parser)]
 #[command(
     version,
-    about = "An inspectable integrity catalog. Never silently accepts changes."
+    about = "An inspectable integrity catalog. Never silently accepts changes.",
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs, or freshly read both trees\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -41,6 +42,10 @@ enum ProgressMode {
 #[derive(Subcommand)]
 enum Command {
     /// Record the current bytes as a baseline; does NOT certify that they are good.
+    #[command(
+        long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. Refuses to overwrite an existing catalog. Stop dataset writers first.",
+        after_help = "Examples:\n  keeper init /data/photos\n  keeper init /data/photos --resume\n\n--resume reuses checkpointed per-path reads; it is NOT a fresh full scrub."
+    )]
     Init {
         #[arg(default_value = ".")]
         root: PathBuf,
@@ -49,6 +54,10 @@ enum Command {
         resume: bool,
     },
     /// Reread every byte by default and compare with the baseline; never accept changes.
+    #[command(
+        long_about = "Reread every regular file and compare with the baseline without accepting changes. Reports added, missing, and changed paths. Stop dataset writers first.",
+        after_help = "Examples:\n  keeper status /data/photos\n  keeper status /data/photos --resume\n\nExit codes: 0 unchanged, 1 differences, 2 operational error.\n--resume reuses earlier reads; it is NOT a fresh full scrub."
+    )]
     Status {
         #[arg(default_value = ".")]
         root: PathBuf,
@@ -57,11 +66,19 @@ enum Command {
         resume: bool,
     },
     /// Inventory metadata and list problems without reading file contents or creating a catalog.
+    #[command(
+        long_about = "Inventory regular-file counts and sizes and list unsupported objects or traversal problems. Does not read file contents, create a catalog, certify readability, or test publication support.",
+        after_help = "Example: keeper preflight /data/photos\nExit codes: 0 no issues, 2 issues or operational error."
+    )]
     Preflight {
         #[arg(default_value = ".")]
         root: PathBuf,
     },
     /// Compare recorded catalogs, or reread both trees with --live. Path-sensitive and read-only.
+    #[command(
+        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
+        after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n\nExit codes: 0 matching, 1 differences, 2 operational error."
+    )]
     Compare {
         left: PathBuf,
         right: PathBuf,
@@ -79,6 +96,10 @@ enum Command {
 #[derive(Subcommand)]
 enum CatalogCommand {
     /// Check checksums, canonical format, and path/object consistency; does not read dataset files.
+    #[command(
+        long_about = "Validate catalog checksums, canonical encoding, and path/object consistency. Dataset file contents are NOT read. Checksums detect accidental catalog damage, not coordinated malicious edits.",
+        after_help = "Example: keeper catalog check /data/photos"
+    )]
     Check {
         #[arg(default_value = ".")]
         root: PathBuf,

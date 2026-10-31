@@ -119,6 +119,12 @@ Stop writers or use read-only snapshots. Metadata race detection is helpful, not
 a snapshot or a defense against hostile concurrent directory replacement. Sequential
 scans of two trees are not proof of agreement at one simultaneous instant.
 
+### CLI presentation and discovery
+
+Structure operations as named subcommands. Top-level `--help` must list commands
+with their purpose and brief syntax. Provide equivalent `help`, plus focused,
+more detailed `help <command>` and nested command help.
+
 ## 7. Atomicity before convenience
 
 Never update authoritative tables piecemeal in place. Stage a complete generation,

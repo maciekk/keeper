@@ -212,6 +212,45 @@ fn rejects_extra_metadata_and_unreferenced_objects() {
 }
 
 #[test]
+fn help_is_discoverable_equivalent_and_supports_nested_commands() {
+    let help = |args: &[&str]| {
+        cargo_bin_cmd!("keeper")
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    };
+    assert_eq!(help(&["--help"]), help(&["help"]));
+    let top = String::from_utf8(help(&["help"])).unwrap();
+    for syntax in [
+        "init [ROOT] [--resume]",
+        "status [ROOT] [--resume]",
+        "preflight [ROOT]",
+        "compare LEFT RIGHT [--live]",
+        "catalog check [ROOT]",
+        "help [COMMAND]...",
+    ] {
+        assert!(top.contains(syntax), "missing {syntax}");
+    }
+    for command in ["init", "status", "preflight", "compare", "catalog"] {
+        assert_eq!(help(&["help", command]), help(&[command, "--help"]));
+    }
+    let nested = help(&["help", "catalog", "check"]);
+    assert_eq!(nested, help(&["catalog", "check", "--help"]));
+    assert!(
+        String::from_utf8(nested)
+            .unwrap()
+            .contains("Dataset file contents are NOT read")
+    );
+    cargo_bin_cmd!("keeper")
+        .args(["help", "unknown"])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn default_root_is_current_directory() {
     let tmp = tempfile::tempdir().unwrap();
     cargo_bin_cmd!("keeper")
