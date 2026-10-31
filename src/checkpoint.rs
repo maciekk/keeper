@@ -2,6 +2,7 @@
 use crate::{
     catalog::{self, Catalog, Entry},
     encoding,
+    policy::Policy,
 };
 use anyhow::{Context, Result, ensure};
 use std::{
@@ -54,6 +55,7 @@ pub struct Checkpoint {
     records: BTreeMap<Vec<u8>, (String, Entry)>,
     pub session: String,
     pub reused: u64,
+    pub policy: Policy,
 }
 
 impl Checkpoint {
@@ -62,6 +64,13 @@ impl Checkpoint {
         let dir = catalog::metadata_dir(root)?;
         let path = dir.join(format!("{operation}.work"));
         let meta = fs::metadata(root)?;
+        let policy = Policy::load(root)?;
+        if let Some(baseline) = baseline {
+            ensure!(
+                baseline.policy == policy,
+                ".keeperignore differs from the catalog scope; status cannot change the baseline scope"
+            );
+        }
         let baseline = match baseline {
             Some(catalog) => {
                 let (paths, objects) = catalog::tables(catalog)?;
@@ -73,12 +82,16 @@ impl Checkpoint {
             }
             None => "genesis".into(),
         };
-        let identity = format!(
-            "keeper-checkpoint\t1\t{operation}\t{}\t{}\t{}\t{baseline}",
+        let mut identity = format!(
+            "keeper-checkpoint\t{}\t{operation}\t{}\t{}\t{}\t{baseline}",
+            if policy.source.is_some() { 2 } else { 1 },
             encoding::encode(root.as_os_str().as_bytes()),
             meta.dev(),
             meta.ino()
         );
+        if policy.source.is_some() {
+            identity.push_str(&format!("\t{}", policy.id()));
+        }
         // Publish even the initial header atomically: a crash cannot leave an
         // apparently valid session with a partially written identity.
         if fs::symlink_metadata(&path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
@@ -111,7 +124,7 @@ impl Checkpoint {
             .context("missing session identity")?;
         ensure!(
             found == identity,
-            "checkpoint version, operation, root identity or baseline mismatch; discard {} and restart",
+            "checkpoint version, operation, root identity, scope policy or baseline mismatch; discard {} and restart",
             path.display()
         );
         ensure!(!session.is_empty(), "empty checkpoint session");
@@ -156,6 +169,7 @@ impl Checkpoint {
             records,
             session: session.into(),
             reused: 0,
+            policy,
         })
     }
 

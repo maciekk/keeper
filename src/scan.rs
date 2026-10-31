@@ -1,6 +1,7 @@
 use crate::{
     catalog::{Catalog, Entry},
     encoding,
+    policy::Policy,
     progress::Progress,
 };
 use anyhow::{Context, Result, ensure};
@@ -21,6 +22,8 @@ pub struct Inventory {
     directories: BTreeMap<Vec<u8>, Metadata>,
     pub bytes: u64,
     pub issues: Vec<String>,
+    pub policy: Policy,
+    pub excluded: Vec<Vec<u8>>,
 }
 
 impl Inventory {
@@ -50,8 +53,12 @@ impl Inventory {
 /// File readability and filesystem durability capabilities are NOT certified.
 pub fn preflight(root: &Path, progress: &mut Progress<'_>) -> Result<Inventory> {
     progress.begin("Preflight", None)?;
-    let mut inventory = Inventory::default();
+    let mut inventory = Inventory {
+        policy: Policy::load(root)?,
+        ..Inventory::default()
+    };
     walk(root, root, &mut inventory, progress)?;
+    inventory.policy.ensure_current(root)?;
     progress.finish()?;
     Ok(inventory)
 }
@@ -134,6 +141,10 @@ fn walk(
                     "reserved .keeper must be a real directory, not a file or symlink",
                 );
             }
+        } else if relative == b".keeperignore" {
+            // Root configuration is represented by the recorded policy, not data.
+        } else if inventory.policy.excludes(&relative, meta.is_dir()) {
+            inventory.excluded.push(relative);
         } else if meta.is_dir() {
             walk(root, &path, inventory, progress)?;
         } else if meta.is_file() {
@@ -165,11 +176,6 @@ fn walk(
     Ok(())
 }
 
-pub fn scan(root: &Path, progress: &mut Progress<'_>) -> Result<Catalog> {
-    let inventory = preflight(root, progress)?;
-    hash_inventory(root, inventory, progress)
-}
-
 /// Hash precisely the preflight inventory, checking directory identities before
 /// and after. This is race detection, not a substitute for a read-only snapshot.
 pub fn hash_inventory(
@@ -187,9 +193,17 @@ pub fn hash_inventory_checkpointed(
     mut checkpoint: Option<&mut crate::checkpoint::Checkpoint>,
 ) -> Result<Catalog> {
     inventory.ensure_clean()?;
+    inventory.policy.ensure_current(root)?;
+    if let Some(work) = &checkpoint {
+        ensure!(
+            work.policy == inventory.policy,
+            ".keeperignore differs from checkpoint scope; discard only the work file and restart"
+        );
+    }
     check_directories(root, &inventory)?;
     progress.begin("Hashing", Some((inventory.file_count(), inventory.bytes)))?;
     let mut catalog = Catalog::new();
+    catalog.policy = inventory.policy.clone();
     for (relative, meta) in &inventory.files {
         crate::cancel::check()?;
         let path = joined(root, relative);
@@ -225,6 +239,7 @@ pub fn hash_inventory_checkpointed(
         );
     }
     crate::cancel::check()?;
+    inventory.policy.ensure_current(root)?;
     progress.finish()?;
     Ok(catalog)
 }
@@ -319,6 +334,55 @@ fn hash_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_changes_after_preflight_abort_before_hashing() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("data"), b"a").unwrap();
+        fs::write(tmp.path().join(".keeperignore"), b"# original\n").unwrap();
+        let mut sink = Vec::new();
+        let mut progress = Progress::new(&mut sink, false);
+        let inventory = preflight(tmp.path(), &mut progress).unwrap();
+        fs::write(tmp.path().join(".keeperignore"), b"/data\n").unwrap();
+        assert!(
+            hash_inventory(tmp.path(), inventory, &mut progress)
+                .unwrap_err()
+                .to_string()
+                .contains("changed during")
+        );
+    }
+
+    #[test]
+    fn scoped_checkpoints_reuse_only_with_the_same_policy() {
+        use crate::{catalog::InitGuard, checkpoint::Checkpoint};
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join(".keeperignore"), b"/skip/\n").unwrap();
+        fs::write(root.join("data"), b"original").unwrap();
+        let _guard = InitGuard::acquire(root).unwrap();
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        let meta = fs::metadata(root.join("data")).unwrap();
+        let entry = hash_file(&root.join("data"), &meta, |_| Ok(())).unwrap();
+        work.record(b"data", &meta, &entry).unwrap();
+        drop(work);
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        let mut sink = Vec::new();
+        let mut progress = Progress::new(&mut sink, false);
+        let inventory = preflight(root, &mut progress).unwrap();
+        let catalog =
+            hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
+        assert_eq!(work.reused, 1);
+        assert_eq!(catalog.policy, Policy::load(root).unwrap());
+        // Even an already-open journal cannot be used after scope changes.
+        fs::write(root.join(".keeperignore"), b"/data\n").unwrap();
+        let inventory = preflight(root, &mut progress).unwrap();
+        assert!(
+            hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work))
+                .unwrap_err()
+                .to_string()
+                .contains("checkpoint scope")
+        );
+    }
 
     #[test]
     fn resumed_pass_reuses_per_path_and_rechecks_restored_mtime_changes() {

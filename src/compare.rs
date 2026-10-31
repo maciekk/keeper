@@ -2,6 +2,7 @@ use crate::{
     catalog::Catalog,
     display::{self, bytes, label, number},
     encoding,
+    policy::Policy,
     scan::Inventory,
 };
 use std::{
@@ -16,6 +17,8 @@ struct ReportOptions {
     roots: [String; 2],
     scope: &'static str,
     issues: Vec<String>,
+    policies: [Policy; 2],
+    excluded: [Option<usize>; 2],
 }
 
 /// Path-sensitive comparison. Object presence elsewhere is not an exact replica.
@@ -27,7 +30,7 @@ pub fn report(
     long: bool,
     live: bool,
     roots: [String; 2],
-) -> io::Result<bool> {
+) -> io::Result<u8> {
     let totals = [left, right].map(|catalog| {
         (
             catalog.len() as u64,
@@ -40,13 +43,15 @@ pub fn report(
         totals,
         roots,
         issues: Vec::new(),
+        policies: [left.policy.clone(), right.policy.clone()],
+        excluded: [None, None],
         scope: if live {
             "Scope: freshly read file bytes; no catalogs. Sequential scans, not a snapshot."
         } else {
             "Scope: recorded catalogs only; dataset bytes were NOT checked."
         },
     };
-    report_entries(left, right, out, &options, |entry, other| {
+    let different = report_entries(left, right, out, &options, |entry, other| {
         format!(
             "left={}\tleft_size={}\tright={}\tright_size={}",
             entry.hash,
@@ -54,6 +59,11 @@ pub fn report(
             other.hash,
             bytes(other.size)
         )
+    })?;
+    Ok(if options.policies[0] == options.policies[1] {
+        u8::from(different)
+    } else {
+        2
     })
 }
 
@@ -79,6 +89,8 @@ pub fn report_metadata(
         long,
         issues,
         roots,
+        policies: [left.policy.clone(), right.policy.clone()],
+        excluded: [Some(left.excluded.len()), Some(right.excluded.len())],
         totals: [left, right].map(|inventory| (inventory.file_count(), inventory.bytes)),
         scope: "Paths + sizes only; contents unchecked. Sequential scans, not a snapshot.",
     };
@@ -89,11 +101,13 @@ pub fn report_metadata(
         &options,
         |left, right| format!("left_size={}\tright_size={}", bytes(*left), bytes(*right)),
     )?;
-    Ok(if options.issues.is_empty() {
-        u8::from(different)
-    } else {
-        2
-    })
+    Ok(
+        if options.issues.is_empty() && options.policies[0] == options.policies[1] {
+            u8::from(different)
+        } else {
+            2
+        },
+    )
 }
 
 // Conservative, case-sensitive component names. Never exclude these paths or
@@ -167,7 +181,8 @@ fn report_entries<T: PartialEq>(
     }
     let [only_left, only_right, different, os] = differences.counts;
     let total = only_left + only_right + different;
-    let complete = options.issues.is_empty();
+    let same_scope = options.policies[0] == options.policies[1];
+    let complete = options.issues.is_empty() && same_scope;
     let color = options.color;
 
     // Assessment contains data and completeness, never legends or caveats.
@@ -179,7 +194,11 @@ fn report_entries<T: PartialEq>(
             if complete {
                 "Comparison"
             } else {
-                "INCOMPLETE — Observed"
+                if same_scope {
+                    "INCOMPLETE — Observed"
+                } else {
+                    "INCOMPLETE — SCOPE MISMATCH — Observed"
+                }
             },
             color
         ),
@@ -306,11 +325,39 @@ fn report_entries<T: PartialEq>(
         color,
     )?;
     let mut bullet = |text: &str| display::note(out, &format!("- {text}"), color);
-    if !complete {
+    if !options.issues.is_empty() {
         bullet("Observed files only; unreadable paths may change totals and apparent absences.")?;
         for issue in &options.issues {
             bullet(issue)?;
         }
+    }
+    if !same_scope {
+        bullet(
+            "Scope policies differ (exact bytes, including comments); these selections do not establish equivalent coverage.",
+        )?;
+    }
+    for (index, policy) in options.policies.iter().enumerate() {
+        if !same_scope && policy.source.is_none() {
+            bullet(&format!(
+                "{} scope: no .keeperignore.",
+                if index == 0 { "Left" } else { "Right" }
+            ))?;
+        }
+        for note in policy.notes(options.excluded[index]) {
+            bullet(&format!(
+                "{} {note}",
+                if index == 0 { "Left" } else { "Right" }
+            ))?;
+        }
+    }
+    if options
+        .policies
+        .iter()
+        .any(|policy| policy.source.is_some())
+    {
+        bullet(
+            "Excluded paths are outside this check; matches do not establish whole-drive equality.",
+        )?;
     }
     bullet(options.scope)?;
     if total > 0 {

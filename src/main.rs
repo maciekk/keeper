@@ -7,6 +7,7 @@ mod checkpoint;
 mod compare;
 mod display;
 mod encoding;
+mod policy;
 mod progress;
 mod scan;
 
@@ -24,7 +25,7 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -48,7 +49,7 @@ enum ProgressMode {
 enum Command {
     /// Record the current bytes as a baseline; does NOT certify that they are good.
     #[command(
-        long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. Refuses to overwrite an existing catalog. Stop dataset writers first.",
+        long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. Refuses to overwrite an existing catalog. Root-level .keeperignore exclusions are recorded with the baseline. Stop dataset writers first.",
         after_help = "Examples:\n  keeper init /data/photos\n  keeper init /data/photos --resume\n\n--resume reuses checkpointed per-path reads; it is NOT a fresh full scrub."
     )]
     Init {
@@ -60,7 +61,7 @@ enum Command {
     },
     /// Reread every byte by default and compare with the baseline; never accept changes.
     #[command(
-        long_about = "Reread every regular file and compare with the baseline without accepting changes. Reports added, missing, and changed paths. Stop dataset writers first.",
+        long_about = "Reread every regular file and compare with the baseline without accepting changes. Reports added, missing, and changed paths. Requires the exact .keeperignore policy recorded at initialization; editing it cannot hide tracked files. Stop dataset writers first.",
         after_help = "Examples:\n  keeper status /data/photos\n  keeper status /data/photos --resume\n\nExit codes: 0 unchanged, 1 differences, 2 operational error.\n--resume reuses earlier reads; it is NOT a fresh full scrub."
     )]
     Status {
@@ -72,7 +73,7 @@ enum Command {
     },
     /// Inventory metadata and list problems without reading file contents or creating a catalog.
     #[command(
-        long_about = "Inventory regular-file counts and sizes and list unsupported objects or traversal problems. Does not read file contents, create a catalog, certify readability, or test publication support.",
+        long_about = "Inventory regular-file counts and sizes and list unsupported objects or traversal problems. Reads root-level .keeperignore if present, but no dataset contents. Does not create a catalog, certify readability, or test publication support.",
         after_help = "Example: keeper preflight /data/photos\nExit codes: 0 no issues, 2 issues or operational error."
     )]
     Preflight {
@@ -81,8 +82,8 @@ enum Command {
     },
     /// Compare catalogs, live bytes, or metadata only. Path-sensitive and read-only.
     #[command(
-        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. With --metadata-only, compare current regular-file paths and sizes without opening files or using catalogs; equal sizes do NOT establish content equality. Empty directories and metadata such as timestamps are not compared. By default, report implicated directories with counts of differing files grouped by immediate parent (not recursive totals); --long also lists individual file differences. Recognized OS housekeeping paths are annotated, never excluded; classification is only a name-based heuristic, not a judgment of data value. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
-        after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n  keeper compare /data/primary /mnt/backup --metadata-only\n\nExit codes: 0 matching, 1 differences, 2 operational error."
+        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. With --metadata-only, compare current regular-file paths and sizes without opening files or using catalogs; equal sizes do NOT establish content equality. Empty directories and metadata such as timestamps are not compared. By default, report implicated directories with counts of differing files grouped by immediate parent (not recursive totals); --long also lists individual file differences. Root-level .keeperignore explicitly selects scan scope; recorded comparison uses saved policies, and differing policies return 2. Junk classification alone never excludes paths and is only a name-based heuristic, not a judgment of data value. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
+        after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n  keeper compare /data/primary /mnt/backup --metadata-only\n\nExit codes: 0 matching selected scope, 1 differences, 2 operational error or scope-policy mismatch."
     )]
     Compare {
         left: PathBuf,
@@ -131,8 +132,9 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             let mut work = resume
                 .then(|| checkpoint::Checkpoint::open(&root, "init", None))
                 .transpose()?;
-            let catalog = scan_session(&root, progress, work.as_mut(), out)?;
+            let catalog = scan_session(&root, progress, work.as_mut(), out, color)?;
             cancel::check()?;
+            catalog.policy.ensure_current(&root)?;
             guard.publish(&catalog)?;
             if let Some(work) = work {
                 work.finish()?;
@@ -160,12 +162,18 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 number(catalog.len())
             )?;
             display::summary(out, "Recorded data", &catalog, color)?;
+            for note in catalog.policy.notes(None) {
+                display::note(out, &format!("- {note}"), color)?;
+            }
             Ok(0)
         }
         Command::Preflight { root: path } => {
             let inventory = scan::preflight(&root(&path)?, progress)?;
             for issue in &inventory.issues {
                 writeln!(out, "{}", display::label(issue, color))?;
+            }
+            for note in inventory.policy.notes(Some(inventory.excluded.len())) {
+                display::note(out, &format!("- {note}"), color)?;
             }
             if !inventory.issues.is_empty() {
                 display::section(out)?;
@@ -240,7 +248,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 let right_catalog = catalog::load(&right).context("right catalog")?;
                 (left_catalog, right_catalog)
             };
-            Ok(u8::from(compare::report(
+            Ok(compare::report(
                 &left_catalog,
                 &right_catalog,
                 out,
@@ -248,7 +256,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 long,
                 live,
                 roots,
-            )?))
+            )?)
         }
         Command::Status { root: path, resume } => {
             let root = root(&path)?;
@@ -257,10 +265,18 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 .then(|| catalog::InitGuard::lock(&root))
                 .transpose()?;
             let expected = catalog::load(&root)?;
+            ensure!(
+                expected.policy == policy::Policy::load(&root)?,
+                ".keeperignore differs from recorded catalog scope; restore the original policy before status (never delete a catalog to change scope)"
+            );
             let mut work = resume
                 .then(|| checkpoint::Checkpoint::open(&root, "status", Some(&expected)))
                 .transpose()?;
-            let observed = scan_session(&root, progress, work.as_mut(), out)?;
+            let observed = scan_session(&root, progress, work.as_mut(), out, color)?;
+            ensure!(
+                expected.policy == observed.policy,
+                "scan scope differs from recorded catalog scope"
+            );
             let (mut added, mut missing, mut changed) = (0, 0, 0);
             for (path, entry) in &expected {
                 let label = encoding::encode(path);
@@ -319,9 +335,15 @@ fn scan_session(
     progress: &mut Progress<'_>,
     work: Option<&mut checkpoint::Checkpoint>,
     out: &mut impl Write,
+    color: bool,
 ) -> Result<catalog::Catalog> {
+    let inventory = scan::preflight(root, progress)?;
+    for note in inventory.policy.notes(Some(inventory.excluded.len())) {
+        display::note(out, &format!("- {note}"), color)?;
+    }
+    out.flush()?;
     match work {
-        None => scan::scan(root, progress),
+        None => scan::hash_inventory(root, inventory, progress),
         Some(work) => {
             writeln!(
                 out,
@@ -329,7 +351,6 @@ fn scan_session(
                 work.session
             )?;
             out.flush()?;
-            let inventory = scan::preflight(root, progress)?;
             let catalog = scan::hash_inventory_checkpointed(root, inventory, progress, Some(work))?;
             writeln!(
                 out,
