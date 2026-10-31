@@ -36,6 +36,7 @@ impl<'a> Progress<'a> {
     }
 
     pub fn begin(&mut self, phase: &'static str, totals: Option<(u64, u64)>) -> io::Result<()> {
+        crate::cancel::check()?;
         self.phase = phase;
         self.started = Instant::now();
         self.last = self.started;
@@ -46,6 +47,7 @@ impl<'a> Progress<'a> {
     }
 
     pub fn advance(&mut self, files: u64, bytes: u64) -> io::Result<()> {
+        crate::cancel::check()?;
         self.files += files;
         self.bytes += bytes;
         if self.last.elapsed() >= Duration::from_secs(1) {

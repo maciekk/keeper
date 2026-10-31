@@ -1087,9 +1087,10 @@ object and verification interval. Multiple paths or drives can share an object I
 while only one of their physical copies is corrupt. A shared per-object
 `last_hash_verified_at` must not imply that every copy was scrubbed.
 
-Verification timestamps, evidence persistence, and resume semantics are not yet
-implemented. Their catalog/cache placement and identity rules must be designed
-before age-based selection or resumability relies on them.
+Opt-in init/status resume now uses disposable per-path session observations;
+see [the implemented checkpoint semantics](resume.md). This is not durable physical
+verification history. Durable evidence persistence and age-based selection still
+need their own catalog/cache placement, identity and interval rules.
 
 ---
 

@@ -2,8 +2,9 @@
 
 The near-term use case is a working dataset (for example, on an SSD) and an
 independent external-drive replica. Device type does not determine authority.
-This milestone enables read-only replica comparison; it is not yet a resumable
-whole-drive maintenance tool. Start with disposable copies, not valuable originals.
+Read-only replica comparison and opt-in checkpointed init/status are implemented;
+whole-drive qualification is still pending. Start with disposable copies, not
+valuable originals. See [resume semantics](resume.md) before reusing earlier reads.
 
 ## 1. Disposable end-to-end test
 
@@ -48,7 +49,9 @@ to valuable originals: modifying a hard-linked test file would modify the origin
 Run preflight, initialization, catalog checks, recorded comparison, fresh comparison,
 and intentional modifications on those disposable copies. This exercises advisory
 locks, directory fsync and no-replace rename on the actual mounts without baselining
-or modifying the valuable corpus. Only `init` creates `.keeper` in the selected root.
+or modifying the valuable corpus. Plain read-only checks do not create `.keeper`;
+`init` and opt-in checkpointed status write Keeper metadata. Follow the
+[filesystem qualification procedure](qualification.md), including cancellation tests.
 
 Preflight inventories every supported file and byte size using metadata. It lists
 all encountered traversal/unsupported-object issues rather than stopping at the
@@ -58,7 +61,7 @@ configuration yet; system folders, symlinks, or unsupported files within a drive
 root must not be silently discarded to obtain a reassuring match. Choose the
 intended corpus root deliberately.
 
-## 3. Definitive baseline workflow (after resumability/hardening)
+## 3. Definitive baseline workflow (after target-drive qualification)
 
 Paths in these examples are placeholders, **not assumed mount paths**. Confirm
 the intended devices, stable identities, mounts, and corpus roots; decide which tree
@@ -68,8 +71,10 @@ and failure domains](principles.md#8-replica-authority-is-an-explicit-external-p
 
 1. Stop writers on both trees, or use appropriate read-only filesystem snapshots.
 2. Run `preflight` on both chosen corpus roots and resolve reported issues.
-3. Run `init` on each tree. Each catalog records that tree's actual bytes; no
-   catalog is copied from one tree to make the other appear initialized.
+3. Run `init` on each tree (or `init --resume` for a checkpointed session; repeat
+   that command after cancellation). Keep writers stopped throughout pauses too.
+   Each catalog records that tree's own physical observations; no catalog is copied
+   from one tree to make the other appear initialized.
 4. Run `catalog check` on both, then `compare LEFT RIGHT`. Matching recorded
    catalogs establish agreement at the recorded paths, assuming stable input
    during initialization. Differences require investigation, not automatic
@@ -90,11 +95,13 @@ Progress can be recorded separately from reports:
 keeper status --progress always /chosen/corpus >status.txt 2>progress.log
 ```
 
-This implementation has progress, deterministic read/mutation failure tests, and
-process-death tests before/after genesis publication. It has **no checkpoints or
-resume**, no verified target-drive filesystem compatibility results, and no large
-corpus memory/performance measurements yet. Those remain prerequisites to our
-recommended definitive whole-drive run. Process-kill tests are not power-loss tests.
+This implementation has progress, deterministic read/mutation failure tests,
+checkpointed init/status, cancellation tests, and process-death tests around
+publication and checkpoints. It still has no verified target-drive filesystem
+compatibility results or representative large-corpus resource measurements.
+Those remain prerequisites to our recommended definitive whole-drive run. Local
+[smoke measurements](qualification.md) are not target qualification; process-kill
+tests are not power-loss tests.
 
 ## Metadata longevity
 

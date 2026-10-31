@@ -23,7 +23,7 @@ fn digest(bytes: &[u8]) -> String {
     format!("b3:{}", blake3::hash(bytes).to_hex())
 }
 
-fn valid_hash(hash: &str) -> bool {
+pub(crate) fn valid_hash(hash: &str) -> bool {
     hash.len() == 67
         && hash.starts_with("b3:")
         && hash.as_bytes()[3..]
@@ -47,7 +47,7 @@ fn objects(catalog: &Catalog) -> Result<BTreeMap<&str, u64>> {
     Ok(objects)
 }
 
-fn tables(catalog: &Catalog) -> Result<(String, String)> {
+pub(crate) fn tables(catalog: &Catalog) -> Result<(String, String)> {
     let mut paths = PATHS_HEADER.to_owned();
     for (path, entry) in catalog {
         encoding::validate_path(path)?;
@@ -74,7 +74,7 @@ fn tables(catalog: &Catalog) -> Result<(String, String)> {
     Ok((paths, object_table))
 }
 
-fn metadata_dir(root: &Path) -> Result<PathBuf> {
+pub(crate) fn metadata_dir(root: &Path) -> Result<PathBuf> {
     let dir = root.join(".keeper");
     let meta = fs::symlink_metadata(&dir).context("read .keeper (run keeper init first)")?;
     ensure!(
@@ -84,7 +84,8 @@ fn metadata_dir(root: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Hold for the entire init. Kernel locks are released automatically after a crash.
+/// Writer exclusion for init or checkpointed status. Hold for the whole operation.
+/// Kernel locks are released automatically after a crash.
 pub struct InitGuard {
     dir: PathBuf,
     _lock: File,
@@ -92,6 +93,16 @@ pub struct InitGuard {
 
 impl InitGuard {
     pub fn acquire(root: &Path) -> Result<Self> {
+        let guard = Self::lock(root)?;
+        ensure!(
+            fs::symlink_metadata(guard.dir.join("catalog"))
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound),
+            "catalog already exists or cannot be inspected; init never overwrites a baseline"
+        );
+        Ok(guard)
+    }
+
+    pub fn lock(root: &Path) -> Result<Self> {
         let dir = root.join(".keeper");
         match fs::create_dir(&dir) {
             Ok(()) => File::open(root)?.sync_all()?,
@@ -110,11 +121,6 @@ impl InitGuard {
         ensure!(lock.metadata()?.is_file(), "LOCK must be a regular file");
         lock.try_lock_exclusive()
             .context("another Keeper writer holds the lock")?;
-        ensure!(
-            fs::symlink_metadata(dir.join("catalog"))
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound),
-            "catalog already exists or cannot be inspected; init never overwrites a baseline"
-        );
         File::open(&dir)?.sync_all()?;
         Ok(Self { dir, _lock: lock })
     }
@@ -157,7 +163,7 @@ impl InitGuard {
     }
 }
 
-fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let from = CString::new(from.as_os_str().as_bytes())?;
     let to = CString::new(to.as_os_str().as_bytes())?;
@@ -182,7 +188,7 @@ pub fn load(root: &Path) -> Result<Catalog> {
         .context("catalog is invalid; refusing to use it as a baseline")
 }
 
-fn read_regular(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
     use std::{io::Read, os::unix::fs::OpenOptionsExt};
     let mut file = OpenOptions::new()
         .read(true)

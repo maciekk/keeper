@@ -1,7 +1,9 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("Keeper currently supports Linux only.");
 
+mod cancel;
 mod catalog;
+mod checkpoint;
 mod compare;
 mod encoding;
 mod progress;
@@ -42,11 +44,17 @@ enum Command {
     Init {
         #[arg(default_value = ".")]
         root: PathBuf,
+        /// Continue a checkpointed session (reuses earlier per-path reads, not a fresh scrub).
+        #[arg(long)]
+        resume: bool,
     },
-    /// Read every byte and compare with the baseline (read-only; no metadata shortcuts).
+    /// Reread every byte by default and compare with the baseline; never accept changes.
     Status {
         #[arg(default_value = ".")]
         root: PathBuf,
+        /// Continue a checkpointed session; writes disposable work state, never the baseline.
+        #[arg(long)]
+        resume: bool,
     },
     /// Inventory metadata and list problems without reading file contents or creating a catalog.
     Preflight {
@@ -85,11 +93,18 @@ fn root(path: &Path) -> Result<PathBuf> {
 
 fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8> {
     match cli.command {
-        Command::Init { root: path } => {
+        Command::Init { root: path, resume } => {
             let root = root(&path)?;
             let guard = catalog::InitGuard::acquire(&root)?;
-            let catalog = scan::scan(&root, progress)?;
+            let mut work = resume
+                .then(|| checkpoint::Checkpoint::open(&root, "init", None))
+                .transpose()?;
+            let catalog = scan_session(&root, progress, work.as_mut(), out)?;
+            cancel::check()?;
             guard.publish(&catalog)?;
+            if let Some(work) = work {
+                work.finish()?;
+            }
             writeln!(out, "Created catalog: {} file(s).", catalog.len())?;
             writeln!(
                 out,
@@ -173,11 +188,17 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
                 out,
             )?))
         }
-        Command::Status { root: path } => {
+        Command::Status { root: path, resume } => {
             let root = root(&path)?;
             // Validate metadata before reading potentially terabytes of data.
+            let _guard = resume
+                .then(|| catalog::InitGuard::lock(&root))
+                .transpose()?;
             let expected = catalog::load(&root)?;
-            let observed = scan::scan(&root, progress)?;
+            let mut work = resume
+                .then(|| checkpoint::Checkpoint::open(&root, "status", Some(&expected)))
+                .transpose()?;
+            let observed = scan_session(&root, progress, work.as_mut(), out)?;
             let (mut added, mut missing, mut changed) = (0, 0, 0);
             for (path, entry) in &expected {
                 let label = encoding::encode(path);
@@ -203,16 +224,57 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>) -> Result<u8
             }
             writeln!(
                 out,
-                "Full-byte check: {} observed file(s); {added} added, {missing} missing, {changed} changed. Baseline unchanged.",
+                "{}: {} observed file(s); {added} added, {missing} missing, {changed} changed. Baseline unchanged.",
+                if resume {
+                    "Checkpointed session"
+                } else {
+                    "Full-byte check"
+                },
                 observed.len()
             )?;
+            out.flush()?;
+            if let Some(work) = work {
+                work.finish()?;
+            }
             Ok(u8::from(added + missing + changed > 0))
+        }
+    }
+}
+
+fn scan_session(
+    root: &Path,
+    progress: &mut Progress<'_>,
+    work: Option<&mut checkpoint::Checkpoint>,
+    out: &mut impl Write,
+) -> Result<catalog::Catalog> {
+    match work {
+        None => scan::scan(root, progress),
+        Some(work) => {
+            writeln!(
+                out,
+                "Scope: checkpointed multi-invocation session {}. Earlier per-path reads may be reused; NOT a fresh full scrub. Metadata cannot detect silent corruption. Keep writers stopped throughout the session.",
+                work.session
+            )?;
+            out.flush()?;
+            let inventory = scan::preflight(root, progress)?;
+            let catalog = scan::hash_inventory_checkpointed(root, inventory, progress, Some(work))?;
+            writeln!(
+                out,
+                "Session observations: {} file(s) reused from earlier reads; {} file(s) freshly read this invocation.",
+                work.reused,
+                catalog.len() as u64 - work.reused
+            )?;
+            Ok(catalog)
         }
     }
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Err(error) = cancel::install() {
+        eprintln!("keeper: install cancellation handlers: {error}");
+        return ExitCode::from(2);
+    }
     let enabled = match cli.progress {
         ProgressMode::Auto => io::stderr().is_terminal(),
         ProgressMode::Always => true,
