@@ -1,4 +1,4 @@
-use crate::encoding;
+use crate::{encoding, policy::Policy};
 use anyhow::{Context, Result, bail, ensure};
 use fs2::FileExt;
 use std::{
@@ -14,10 +14,55 @@ pub struct Entry {
     pub size: u64,
 }
 
-pub type Catalog = BTreeMap<Vec<u8>, Entry>;
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Catalog {
+    files: BTreeMap<Vec<u8>, Entry>,
+    pub policy: Policy,
+}
+
+impl Catalog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl std::ops::Deref for Catalog {
+    type Target = BTreeMap<Vec<u8>, Entry>;
+    fn deref(&self) -> &Self::Target {
+        &self.files
+    }
+}
+impl std::ops::DerefMut for Catalog {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.files
+    }
+}
+impl<'a> IntoIterator for &'a Catalog {
+    type Item = (&'a Vec<u8>, &'a Entry);
+    type IntoIter = std::collections::btree_map::Iter<'a, Vec<u8>, Entry>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.files.iter()
+    }
+}
 const PATHS_HEADER: &str = "path\tkind\tobject\tsize\n";
 const OBJECTS_HEADER: &str = "object\tsize\n";
 const MANIFEST_HEADER: &str = "keeper-catalog-version\t1\ngeneration\t1\n";
+
+fn manifest(objects: &[u8], paths: &[u8], policy: &Policy) -> String {
+    match &policy.source {
+        None => format!(
+            "{MANIFEST_HEADER}file\tobjects.tsv\t{}\nfile\tpaths.tsv\t{}\n",
+            digest(objects),
+            digest(paths)
+        ),
+        Some(source) => format!(
+            "keeper-catalog-version\t2\ngeneration\t1\nscope-policy\tkeeperignore-1\nfile\tobjects.tsv\t{}\nfile\tpaths.tsv\t{}\nfile\tscope.ignore\t{}\n",
+            digest(objects),
+            digest(paths),
+            digest(source)
+        ),
+    }
+}
 
 fn digest(bytes: &[u8]) -> String {
     format!("b3:{}", blake3::hash(bytes).to_hex())
@@ -51,6 +96,12 @@ pub(crate) fn tables(catalog: &Catalog) -> Result<(String, String)> {
     let mut paths = PATHS_HEADER.to_owned();
     for (path, entry) in catalog {
         encoding::validate_path(path)?;
+        if catalog.policy.source.is_some() {
+            ensure!(
+                path != b".keeperignore" && !catalog.policy.excludes(path, false),
+                "catalog contains a path excluded by its recorded scope policy"
+            );
+        }
         for (index, &byte) in path.iter().enumerate() {
             if byte == b'/' {
                 ensure!(
@@ -127,11 +178,8 @@ impl InitGuard {
 
     pub fn publish(&self, catalog: &Catalog) -> Result<()> {
         let (paths, objects) = tables(catalog)?;
-        let manifest = format!(
-            "{MANIFEST_HEADER}file\tobjects.tsv\t{}\nfile\tpaths.tsv\t{}\n",
-            digest(objects.as_bytes()),
-            digest(paths.as_bytes())
-        );
+        let manifest = manifest(objects.as_bytes(), paths.as_bytes(), &catalog.policy);
+
         let staging = tempfile::Builder::new()
             .prefix(".init-")
             .tempdir_in(&self.dir)?;
@@ -145,6 +193,14 @@ impl InitGuard {
                 .create_new(true)
                 .open(staging.path().join(name))?;
             file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+        }
+        if let Some(source) = &catalog.policy.source {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(staging.path().join("scope.ignore"))?;
+            file.write_all(source)?;
             file.sync_all()?;
         }
         // Use the production reader before making a generation authoritative.
@@ -212,18 +268,20 @@ fn read_generation(dir: &Path) -> Result<Catalog> {
         .map(|entry| entry.map(|e| e.file_name()))
         .collect::<std::io::Result<_>>()?;
     names.sort();
+    let scoped = names == ["MANIFEST", "objects.tsv", "paths.tsv", "scope.ignore"];
     ensure!(
-        names == ["MANIFEST", "objects.tsv", "paths.tsv"],
+        scoped || names == ["MANIFEST", "objects.tsv", "paths.tsv"],
         "unexpected catalog file set"
     );
+    let policy = if scoped {
+        Policy::parse(read_regular(&dir.join("scope.ignore"))?)?
+    } else {
+        Policy::default()
+    };
     let manifest = String::from_utf8(read_regular(&dir.join("MANIFEST"))?)?;
     let objects_bytes = read_regular(&dir.join("objects.tsv"))?;
     let paths_bytes = read_regular(&dir.join("paths.tsv"))?;
-    let expected_manifest = format!(
-        "{MANIFEST_HEADER}file\tobjects.tsv\t{}\nfile\tpaths.tsv\t{}\n",
-        digest(&objects_bytes),
-        digest(&paths_bytes)
-    );
+    let expected_manifest = self::manifest(&objects_bytes, &paths_bytes, &policy);
     ensure!(
         manifest == expected_manifest,
         "unsupported manifest or catalog checksum mismatch"
@@ -236,7 +294,10 @@ fn read_generation(dir: &Path) -> Result<Catalog> {
         records.is_empty() || records.ends_with('\n'),
         "unterminated paths record"
     );
-    let mut catalog = Catalog::new();
+    let mut catalog = Catalog {
+        policy,
+        ..Catalog::new()
+    };
     for line in records.lines() {
         let fields: Vec<_> = line.split('\t').collect();
         ensure!(
