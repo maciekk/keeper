@@ -307,7 +307,7 @@ fn preflight_uses_units_and_colors_both_results_and_progress() {
     assert!(String::from_utf8_lossy(&colored.stdout).contains("\x1b[1m1.18 MiB\x1b[0m"));
     assert!(
         String::from_utf8_lossy(&colored.stderr)
-            .contains("\x1b[1;36mPreflight\x1b[0m: \x1b[1;32mcompleted\x1b[0m")
+            .contains("\x1b[1;37mPreflight\x1b[0m: \x1b[1;32mcompleted\x1b[0m")
     );
     let automatic = keeper(&["preflight", "--progress", "always"], tmp.path())
         .env("NO_COLOR", "1")
