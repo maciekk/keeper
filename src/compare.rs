@@ -186,7 +186,6 @@ fn report_entries<T: PartialEq>(
     let color = options.color;
 
     // Assessment contains data and completeness, never legends or caveats.
-    display::section(out)?;
     writeln!(
         out,
         "{}: {} matching, {} only left, {} only right, {} different.",

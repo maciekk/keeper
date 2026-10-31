@@ -367,6 +367,16 @@ fn scan_session(
 }
 
 fn main() -> ExitCode {
+    // One opening separator for every invocation, including clap help/errors.
+    // Flush before parsing or progress so stdout/stderr cannot reorder it.
+    let opening = {
+        let mut out = io::stdout().lock();
+        writeln!(out).and_then(|_| out.flush())
+    };
+    if let Err(error) = opening {
+        eprintln!("keeper: write output: {error}");
+        return ExitCode::from(2);
+    }
     let cli = Cli::parse();
     if let Err(error) = cancel::install() {
         eprintln!("keeper: install cancellation handlers: {error}");
@@ -392,15 +402,7 @@ fn main() -> ExitCode {
         .terminal(io::stderr().is_terminal())
         .color(progress_color);
     let mut out = io::BufWriter::new(io::stdout().lock());
-    let result = (|| {
-        // Progress supplies its own opening space. Without terminal progress,
-        // separate the report from the invoking shell command instead.
-        if io::stdout().is_terminal() && !(enabled && io::stderr().is_terminal()) {
-            writeln!(out)?;
-        }
-        run(cli, &mut out, &mut progress, color)
-    })()
-    .and_then(|code| {
+    let result = run(cli, &mut out, &mut progress, color).and_then(|code| {
         out.flush()?;
         Ok(code)
     });

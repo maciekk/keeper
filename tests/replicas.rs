@@ -133,7 +133,7 @@ fn catalog_comparison_reports_every_difference_and_rejects_corruption() {
     assert!(stdout(&result).contains("right_size=2"));
     fs::write(right.path().join(".keeper/catalog/MANIFEST"), b"bad").unwrap();
     let result = run(&["compare"], &[left.path(), right.path()], 2);
-    assert!(result.stdout.is_empty());
+    assert_eq!(result.stdout, b"\n"); // Opening separator, no partial report.
     assert!(stderr(&result).contains("right catalog"));
     // Live mode explicitly ignores catalogs, including corrupt ones.
     run(&["compare", "--live"], &[left.path(), right.path()], 1);
@@ -150,13 +150,13 @@ fn live_checks_both_preflights_before_hashing_and_never_reports_partial_agreemen
         &[left.path(), right.path()],
         2,
     );
-    assert!(result.stdout.is_empty());
+    assert_eq!(result.stdout, b"\n"); // Opening separator, no partial report.
     assert!(stderr(&result).contains("Left Preflight"));
     assert!(stderr(&result).contains("Right Preflight"));
     assert!(!stderr(&result).contains("Hashing:"));
     symlink("missing", left.path().join("left-bad")).unwrap();
     let both = run(&["compare", "--live"], &[left.path(), right.path()], 2);
-    assert!(both.stdout.is_empty());
+    assert_eq!(both.stdout, b"\n"); // Opening separator, no partial report.
     assert!(stderr(&both).contains("left dataset:"));
     assert!(stderr(&both).contains("ISSUE\tleft-bad\t"));
     assert!(stderr(&both).contains("right dataset:"));

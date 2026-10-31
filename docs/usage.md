@@ -117,9 +117,12 @@ changes in metadata-only mode.
 
 ## Progress, colour, and exit codes
 
+Every invocation starts with exactly one blank line, including help, version,
+errors, and redirected output. The opening separator is written to stdout before
+any progress or diagnostics; progress phases do not add another leading blank line.
+
 - `--progress auto|always|never`: default `auto` enables progress only on a
-  terminal. Terminal updates replace the current line; one leading blank line
-  precedes contiguous phase lines. Hashing reports throughput, percentage, and ETA
+  terminal. Terminal updates replace the current line; phase lines stay contiguous. Hashing reports throughput, percentage, and ETA
   when totals are known, including within large files. ETA and elapsed time each
   use a single rounded figure: seconds below 2 minutes, minutes below 2 hours,
   then hours (`119s`, `115m`, `2h`). For files of at least 256 MiB taking more than a
