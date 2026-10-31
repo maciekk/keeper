@@ -118,11 +118,12 @@ changes in metadata-only mode.
   when totals are known, including within large files. ETA and elapsed time use
   human-friendly durations (for example, `2h 38m 10s` or `1d 3h`); short runs
   retain tenths of a second. For files of at least 256 MiB taking more than a
-  second to read, terminal progress appends a per-file bar, percentage, and
-  bytes-read/size after the overall ETA. It clears when that file finishes and
-  does not appear in redirected logs or for checkpoint-reused files. On narrower
-  terminals the overall line is shortened to retain the bar; very narrow terminals
-  show only overall progress.
+  second to read, terminal progress appends a compact per-file star bar after the
+  overall ETA, without extra per-file statistics. Filled stars are green when
+  colour is enabled. The bar clears when the file finishes and does not appear in
+  redirected logs or for checkpoint-reused files. ETA is never truncated: other
+  fields are shortened first, and the bar is omitted if needed. If the terminal is
+  narrower than the ETA itself, the complete ETA takes priority over fitting.
 - Forced redirected progress records phase starts/completions without terminal
   controls or repetitive updates.
 - `--color auto|always|never`: automatic colour checks stdout and stderr separately;

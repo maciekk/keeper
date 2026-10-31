@@ -208,6 +208,9 @@ pub fn progress_line(text: &str, color: bool, completed: bool) -> String {
             if index == 0 {
                 let style = if completed { "1;32" } else { "1;36" };
                 format!("\x1b[{style}m{part}\x1b[0m")
+            } else if part.trim_start().starts_with('[') {
+                part.replace('*', "\x1b[32m*\x1b[0m")
+                    .replace('.', "\x1b[2m.\x1b[0m")
             } else if let Some((key, value)) = part.split_once('=') {
                 format!("\x1b[2m{key}=\x1b[0m{}", emphasis(value, true))
             } else {
@@ -326,6 +329,16 @@ mod tests {
         ] {
             assert_eq!(duration(seconds), expected);
         }
+    }
+
+    #[test]
+    fn file_progress_uses_coloured_stars_without_changing_plain_output() {
+        let text = "Hashing: running; ETA=2h; [*****.....]";
+        assert_eq!(progress_line(text, false, false), text);
+        let styled = progress_line(text, true, false);
+        assert_eq!(styled.matches("\x1b[32m*\x1b[0m").count(), 5);
+        assert_eq!(styled.matches("\x1b[2m.\x1b[0m").count(), 5);
+        assert!(styled.contains("ETA="));
     }
 
     #[test]
