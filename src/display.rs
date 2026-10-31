@@ -57,10 +57,104 @@ pub fn label(text: &str, color: bool) -> String {
     let style = match text {
         "CHANGED" | "DIFFERENT" | "MISSING" => "1;31",
         "ADDED" | "ONLY_LEFT" | "ONLY_RIGHT" => "1;33",
-        _ if text.starts_with("ISSUE\t") => "1;33",
+        _ if text.starts_with("ISSUE\t") || text.starts_with("INCOMPLETE") => "1;33",
         _ => "1;36",
     };
     format!("\x1b[{style}m{text}\x1b[0m")
+}
+
+pub fn dim(text: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[2m{text}\x1b[0m")
+    } else {
+        text.to_owned()
+    }
+}
+
+pub fn note(out: &mut impl Write, text: &str, color: bool) -> io::Result<()> {
+    writeln!(out, "{}", dim(text, color))
+}
+
+/// Compact plain-text table. Only the final column may be shortened on a TTY;
+/// redirected reports retain full values. Style after padding to preserve alignment.
+pub fn table(
+    out: &mut impl Write,
+    headers: &[&str],
+    rows: &[Vec<String>],
+    right_align: &[bool],
+    color: bool,
+) -> io::Result<()> {
+    let columns = if io::stdout().is_terminal() {
+        terminal_columns()
+    } else {
+        None
+    };
+    table_with_width(out, headers, rows, right_align, color, columns)
+}
+
+fn table_with_width(
+    out: &mut impl Write,
+    headers: &[&str],
+    rows: &[Vec<String>],
+    right_align: &[bool],
+    color: bool,
+    columns: Option<usize>,
+) -> io::Result<()> {
+    let mut widths: Vec<_> = headers.iter().map(|text| text.chars().count()).collect();
+    for row in rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    if let (Some(columns), Some((&last, preceding))) = (columns, widths.split_last()) {
+        let used = preceding.iter().sum::<usize>() + 2 * preceding.len();
+        let limit = columns.saturating_sub(used + 1).max(3);
+        *widths.last_mut().unwrap() = last.min(limit);
+    }
+    let format_row = |cells: &[String]| {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                let width = widths[index];
+                let text = if text.chars().count() > width {
+                    format!(
+                        "{}...",
+                        text.chars()
+                            .take(width.saturating_sub(3))
+                            .collect::<String>()
+                    )
+                } else {
+                    text.clone()
+                };
+                if right_align[index] {
+                    format!("{text:>width$}")
+                } else if index + 1 == cells.len() {
+                    text
+                } else {
+                    format!("{text:<width$}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+    let header = format_row(&headers.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>());
+    note(out, &header, color)?;
+    for row in rows {
+        writeln!(out, "{}", format_row(row))?;
+    }
+    Ok(())
+}
+
+fn terminal_columns() -> Option<usize> {
+    let mut size = std::mem::MaybeUninit::<libc::winsize>::zeroed();
+    // SAFETY: valid writable winsize pointer; read only after successful ioctl.
+    if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, size.as_mut_ptr()) } == 0 {
+        let columns = unsafe { size.assume_init() }.ws_col as usize;
+        (columns > 0).then_some(columns)
+    } else {
+        None
+    }
 }
 
 pub fn emphasis(text: &str, color: bool) -> String {
@@ -127,6 +221,43 @@ pub fn summary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tables_align_numbers_and_shorten_only_terminal_paths() {
+        let rows = vec![
+            vec!["1".into(), "photos/a-very-long-directory".into()],
+            vec!["12,345".into(), "short".into()],
+        ];
+        let mut plain = Vec::new();
+        table_with_width(
+            &mut plain,
+            &["Files", "Directory"],
+            &rows,
+            &[true, false],
+            false,
+            None,
+        )
+        .unwrap();
+        let plain = String::from_utf8(plain).unwrap();
+        assert!(plain.contains("     1  photos/a-very-long-directory\n12,345  short\n"));
+        assert!(!plain.contains('\x1b'));
+        let mut narrow = Vec::new();
+        table_with_width(
+            &mut narrow,
+            &["Files", "Directory"],
+            &rows,
+            &[true, false],
+            true,
+            Some(24),
+        )
+        .unwrap();
+        let narrow = String::from_utf8(narrow).unwrap();
+        assert!(narrow.starts_with("\x1b[2m"));
+        assert!(narrow.contains("     1  photos/a-ver..."));
+        assert!(!narrow.contains("long-directory"));
+        assert_eq!(dim("note", false), "note");
+        assert_eq!(dim("note", true), "\x1b[2mnote\x1b[0m");
+    }
+
     #[test]
     fn readable_numbers_and_sizes() {
         assert_eq!(number(0), "0");
