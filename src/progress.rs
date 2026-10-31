@@ -120,29 +120,7 @@ impl<'a> Progress<'a> {
         }
         let elapsed = self.started.elapsed().as_secs_f64();
         let mut line = Vec::new();
-        match self.totals {
-            Some((files, bytes)) => write!(
-                line,
-                "{}{}: {state}; files={}/{}; read={}/{}; {:.1} MiB/s; elapsed={}",
-                self.scope,
-                self.phase,
-                crate::display::number(self.files),
-                crate::display::number(files),
-                crate::display::bytes(self.bytes),
-                crate::display::bytes(bytes),
-                self.bytes as f64 / elapsed.max(0.001) / 1048576.0,
-                crate::display::duration(elapsed)
-            )?,
-            None => write!(
-                line,
-                "{}{}: {state}; files={}; inventoried={}; elapsed={}",
-                self.scope,
-                self.phase,
-                crate::display::number(self.files),
-                crate::display::bytes(self.bytes),
-                crate::display::duration(elapsed)
-            )?,
-        }
+        write!(line, "{}{}: {state}", self.scope, self.phase)?;
         if let Some((files, bytes)) = self.totals {
             let fraction = if bytes > 0 {
                 self.bytes as f64 / bytes as f64
@@ -160,25 +138,44 @@ impl<'a> Progress<'a> {
                     crate::display::duration(elapsed * (1.0 - fraction) / fraction)
                 )?;
             }
-        }
-        let mut suffix = Vec::new();
-        if state == "running"
-            && let Some(file) = &self.current_file
-            && file.started.elapsed() >= Duration::from_secs(1)
-        {
-            let fraction = (file.read as f64 / file.size as f64).clamp(0.0, 1.0);
-            let filled = (fraction * 10.0).floor() as usize;
             write!(
-                suffix,
-                "; [{}{}]",
-                "*".repeat(filled),
-                ".".repeat(10 - filled)
+                line,
+                "; files={}/{}; read={}/{}; {:.1} MiB/s; elapsed={}",
+                crate::display::number(self.files),
+                crate::display::number(files),
+                crate::display::bytes(self.bytes),
+                crate::display::bytes(bytes),
+                self.bytes as f64 / elapsed.max(0.001) / 1048576.0,
+                crate::display::duration(elapsed)
             )?;
+        } else {
+            write!(
+                line,
+                "; files={}; inventoried={}; elapsed={}",
+                crate::display::number(self.files),
+                crate::display::bytes(self.bytes),
+                crate::display::duration(elapsed)
+            )?;
+        }
+        let mut bar = Vec::new();
+        if self.terminal && self.totals.is_some() {
+            if state == "running"
+                && let Some(file) = &self.current_file
+                && file.started.elapsed() >= Duration::from_secs(1)
+            {
+                let fraction = (file.read as f64 / file.size as f64).clamp(0.0, 1.0);
+                let filled = (fraction * 10.0).floor() as usize;
+                write!(bar, "; [{}{}]", "*".repeat(filled), ".".repeat(10 - filled))?;
+            } else {
+                // Same visible width as "; [**********]", without an active bar.
+                bar.extend_from_slice(b"; ");
+                bar.resize(14, b' ');
+            }
         }
         // Fit plain ASCII before styling; ETA is protected from truncation.
         fit_progress(
             &mut line,
-            &suffix,
+            &bar,
             if self.terminal {
                 terminal_columns()
             } else {
@@ -208,33 +205,61 @@ fn terminal_columns() -> Option<usize> {
     }
 }
 
-fn fit_progress(line: &mut Vec<u8>, suffix: &[u8], columns: Option<usize>) {
+fn fit_progress(line: &mut Vec<u8>, bar: &[u8], columns: Option<usize>) {
+    let mut priority_end = 0;
+    let mut position = 0;
+    let mut percentage = None;
+    let mut eta = None;
+    for part in line.split(|&b| b == b';') {
+        let value = part.trim_ascii();
+        if value.ends_with(b"%") {
+            percentage = Some(value.to_vec());
+            priority_end = position + part.len();
+        } else if value.starts_with(b"ETA=") {
+            eta = Some(value.to_vec());
+            priority_end = position + part.len();
+        }
+        position += part.len() + 1;
+    }
+    let mut details = line.split_off(priority_end);
     let Some(columns) = columns else {
-        line.extend_from_slice(suffix);
+        line.extend_from_slice(bar);
+        line.extend_from_slice(&details);
         return;
     };
     let limit = columns.saturating_sub(1);
-    let eta = line
-        .windows(6)
-        .rposition(|part| part == b"; ETA=")
-        .map(|index| line.split_off(index))
-        .unwrap_or_default();
-    // Retain a little context before the ETA/bar. Drop the bar first if needed.
-    let suffix = if eta.len() + suffix.len() + 24 <= limit {
-        suffix
+    if line.len() > limit {
+        // If even the phase heading won't fit, keep the percentage and ETA.
+        let compact = [percentage.as_deref(), eta.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(b"; ".as_slice());
+        line.clear();
+        if compact.len() <= limit {
+            line.extend_from_slice(&compact);
+        } else if let Some(eta) = eta {
+            // An ETA wider than the terminal still takes priority over fitting.
+            line.extend_from_slice(&eta);
+        } else {
+            line.extend_from_slice(&compact);
+        }
+        return;
+    }
+    // Drop the optional bar before compromising the priority fields.
+    let bar = if line.len() + bar.len() + 12 <= limit {
+        bar
     } else {
         &[]
     };
-    if !eta.is_empty() && eta.len() >= limit {
-        // A full ETA cannot physically fit in a smaller terminal. Prefer the
-        // complete value to an ellipsis, even if this pathological case wraps.
-        line.clear();
-        line.extend_from_slice(&eta[2..]);
-        return;
+    let available = limit.saturating_sub(line.len() + bar.len());
+    if available < 4 && details.len() > available {
+        details.clear();
+    } else {
+        fit_line(&mut details, available + 1);
     }
-    fit_line(line, limit.saturating_sub(eta.len() + suffix.len()) + 1);
-    line.extend_from_slice(&eta);
-    line.extend_from_slice(suffix);
+    line.extend_from_slice(bar);
+    line.extend_from_slice(&details);
 }
 
 fn fit_line(line: &mut Vec<u8>, columns: usize) {
@@ -288,6 +313,7 @@ mod tests {
         progress.report("running").unwrap();
         drop(progress);
         let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Hashing: running; 25.0%; ETA="));
         assert!(output.contains("; [*****.....]"));
         assert!(output.find("; ETA=").unwrap() < output.find("; [").unwrap());
         assert_eq!(output.matches("; [").count(), 1);
@@ -317,12 +343,13 @@ mod tests {
 
     #[test]
     fn file_bar_remains_visible_without_wrapping_on_smaller_terminals() {
-        let base = b"Hashing: running; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h; ETA=2h";
+        let base =
+            b"Hashing: running; 5.0%; ETA=2h; files=123/1000; read=1.00 GiB/20.00 GiB; elapsed=1h";
         let suffix = b"; [*****.....]";
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(100));
         assert!(line.len() < 100);
-        assert!(line.ends_with(suffix));
+        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....]; files="));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, Some(20));
         assert!(line.len() < 20);
@@ -330,8 +357,35 @@ mod tests {
         assert!(line.ends_with(b"; ETA=2h"));
         let mut line = base.to_vec();
         fit_progress(&mut line, suffix, None);
-        assert!(line.starts_with(base));
-        assert!(line.ends_with(suffix));
+        assert!(String::from_utf8_lossy(&line).contains("ETA=2h; [*****.....]; files="));
+        assert!(line.ends_with(b"elapsed=1h"));
+    }
+
+    #[test]
+    fn bar_and_placeholder_reserve_identical_columns() {
+        let base =
+            b"Hashing: running; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB; elapsed=5m";
+        let bar = b"; [*****.....]";
+        let mut placeholder = b"; ".to_vec();
+        placeholder.resize(bar.len(), b' ');
+        for width in [Some(40), Some(60), Some(80), Some(160), None] {
+            let mut active = base.to_vec();
+            let mut absent = base.to_vec();
+            fit_progress(&mut active, bar, width);
+            fit_progress(&mut absent, &placeholder, width);
+            let active = String::from_utf8(active).unwrap();
+            let absent = String::from_utf8(absent).unwrap();
+            assert_eq!(active.len(), absent.len());
+            for key in ["files=", "read=", "elapsed="] {
+                assert_eq!(active.find(key), absent.find(key), "width={width:?}");
+            }
+            if active.contains("[*****.....]") {
+                assert!(active.find("[*****.....]").unwrap() > active.find("ETA=").unwrap());
+                if let Some(index) = active.find("files=") {
+                    assert!(active.find("[*****.....]").unwrap() < index);
+                }
+            }
+        }
     }
 
     #[test]
@@ -352,6 +406,21 @@ mod tests {
     }
 
     #[test]
+    fn percentage_and_eta_precede_details_and_survive_narrow_layouts() {
+        let base = b"Left Hashing: running; 50.0%; ETA=115m; files=1/20; read=1.00 GiB/2.00 GiB; elapsed=5m";
+        for width in [32, 40, 60, 80, 120] {
+            let mut line = base.to_vec();
+            fit_progress(&mut line, b"; [*****.....]", Some(width));
+            let text = String::from_utf8(line).unwrap();
+            assert!(text.contains("50.0%; ETA=115m"), "{width}: {text}");
+            assert!(text.len() < width);
+            if text.contains("files=") {
+                assert!(text.find("ETA=").unwrap() < text.find("files=").unwrap());
+            }
+        }
+    }
+
+    #[test]
     fn terminal_updates_replace_one_line_and_finish_with_newline() {
         let mut output = Vec::new();
         let mut progress = Progress::new(&mut output, true).terminal(true);
@@ -366,7 +435,11 @@ mod tests {
         assert!(text.starts_with("\r\x1b[2K"));
         assert_eq!(text.matches("\r\x1b[2K").count(), 3);
         assert!(text.contains("50.0%; ETA="));
-        assert!(text.ends_with("100.0%\n"));
+        assert!(text.contains(&format!(
+            "Hashing: completed; 100.0%; {}; files=",
+            " ".repeat(12)
+        )));
+        assert!(text.ends_with('\n'));
     }
 
     #[test]
@@ -436,7 +509,7 @@ mod tests {
         progress.finish().unwrap();
         drop(progress);
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("Hashing: completed; files=1/1; read=42 B/42 B"));
+        assert!(text.contains("Hashing: completed; 100.0%; files=1/1; read=42 B/42 B"));
         let mut output = Vec::new();
         let mut progress = Progress::new(&mut output, false);
         progress.begin("Preflight", None).unwrap();
