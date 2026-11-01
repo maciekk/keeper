@@ -180,6 +180,11 @@ impl Checkpoint {
         })
     }
 
+    pub fn with_sync_interval(mut self, interval: Duration) -> Self {
+        self.sync_interval = interval;
+        self
+    }
+
     pub fn reuse(&mut self, path: &[u8], meta: &Metadata) -> Option<Entry> {
         let (identity, entry) = self.records.get(path)?;
         if *identity == fingerprint(meta) && entry.size == meta.size() {
@@ -234,8 +239,9 @@ mod tests {
             size: 4,
         };
         let _guard = InitGuard::acquire(root).unwrap();
-        let mut work = Checkpoint::open(root, "init", None).unwrap();
-        work.sync_interval = Duration::from_secs(10);
+        let mut work = Checkpoint::open(root, "init", None)
+            .unwrap()
+            .with_sync_interval(Duration::from_secs(10));
         // Set synthetic timestamps rather than sleeping; no record-count trigger.
         // A future timestamp keeps slow CI from reaching the time threshold.
         let future = Instant::now() + Duration::from_secs(60);

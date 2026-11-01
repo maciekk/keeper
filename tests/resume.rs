@@ -248,6 +248,45 @@ fn checkpoint_writers_are_excluded_but_plain_status_remains_read_only() {
 }
 
 #[test]
+fn checkpoint_interval_requires_resume_and_positive_whole_seconds() {
+    for operation in ["init", "status"] {
+        for args in [
+            vec![operation, "--checkpoint-interval", "10"],
+            vec![operation, "--resume", "--checkpoint-interval", "0"],
+            vec![operation, "--resume", "--checkpoint-interval", "-1"],
+            vec![operation, "--resume", "--checkpoint-interval", "1.5"],
+            vec![operation, "--resume", "--checkpoint-interval", "10s"],
+        ] {
+            cargo_bin_cmd!("keeper").args(args).assert().code(2);
+        }
+        let output = cargo_bin_cmd!("keeper")
+            .args(["help", operation])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let help = String::from_utf8(output).unwrap();
+        assert!(help.contains("--checkpoint-interval"));
+        assert!(help.contains("default: 5"));
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("data"), b"data").unwrap();
+    run(
+        tmp.path(),
+        &["init", "--resume", "--checkpoint-interval", "10"],
+        0,
+    );
+    let expected = baseline(tmp.path());
+    run(
+        tmp.path(),
+        &["status", "--resume", "--checkpoint-interval", "5"],
+        0,
+    );
+    assert_eq!(expected, baseline(tmp.path()));
+}
+
+#[test]
 fn changed_baseline_rejects_old_verification_session() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();

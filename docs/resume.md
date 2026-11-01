@@ -8,6 +8,9 @@ keeper init --resume /path/to/dataset
 keeper status --resume /path/to/dataset
 # Ctrl-C, then repeat to continue this verification session.
 
+# Less frequent durability flushes for a slow disk (positive whole seconds):
+keeper init --resume --checkpoint-interval 10 /path/to/dataset
+
 # A NEW physical check, ignoring all work state:
 keeper status /path/to/dataset
 ```
@@ -72,8 +75,13 @@ exclusive `.keeper/LOCK` used for initialization. A work file contains:
 
 Header creation is synced and published without replacement. Completed-file rows
 are appended immediately; durability flushes are batched after **five seconds since
-the previous flush**, checked at file completion. There is no file-count trigger
-or background timer: hashing a large file or waiting in I/O
+the previous flush** by default, checked at file completion. Use
+`--checkpoint-interval SECONDS` with `init --resume` or `status --resume` to change
+this to a positive whole number of seconds (for example, 5 or 10). There is no
+file-count trigger. The interval is a runtime setting, not part of the checkpoint
+identity; it can be changed when resuming an existing session without discarding
+work. Longer intervals reduce flush overhead but increase potential rereads after
+power loss. There is no background timer: hashing a large file or waiting in I/O
 can delay the next flush. Normal process cancellation or death leaves complete
 appends in the kernel cache; a system crash or power loss can lose the unsynced
 batch, causing those files to be reread. The current file is always reread after
