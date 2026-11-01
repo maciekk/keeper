@@ -14,7 +14,7 @@ use std::{
         fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub fn fingerprint(meta: &Metadata) -> String {
@@ -49,10 +49,15 @@ fn verify(line: &str) -> Result<&str> {
     Ok(payload)
 }
 
+// Checked at file completion, not by a background timer.
+const SYNC_INTERVAL: Duration = Duration::from_secs(5);
+
 pub struct Checkpoint {
     path: PathBuf,
     file: File,
     records: BTreeMap<Vec<u8>, (String, Entry)>,
+    sync_interval: Duration,
+    last_sync: Instant,
     pub session: String,
     pub reused: u64,
     pub policy: Policy,
@@ -167,6 +172,8 @@ impl Checkpoint {
             path,
             file,
             records,
+            sync_interval: SYNC_INTERVAL,
+            last_sync: Instant::now(),
             session: session.into(),
             reused: 0,
             policy,
@@ -193,9 +200,14 @@ impl Checkpoint {
             now()?
         );
         self.file.write_all(checked(&payload).as_bytes())?;
-        // Per-file sync bounds lost work to the current file, without rewriting
-        // an ever-growing inventory on every completion.
-        self.file.sync_all()?;
+        // Append immediately so process cancellation/death retains complete rows
+        // in the kernel cache. Batch durability flushes to avoid a read/flush/seek
+        // cycle for every small file on spinning disks. A system crash can lose
+        // the pending batch; missing observations are safely reread on resume.
+        if self.last_sync.elapsed() >= self.sync_interval {
+            self.file.sync_all()?;
+            self.last_sync = Instant::now();
+        }
         Ok(())
     }
 
@@ -203,5 +215,58 @@ impl Checkpoint {
         fs::remove_file(&self.path)?;
         File::open(self.path.parent().unwrap())?.sync_all()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::InitGuard;
+
+    #[test]
+    fn batches_sync_by_configured_interval_and_reopens_pending_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("data"), b"data").unwrap();
+        let meta = fs::metadata(root.join("data")).unwrap();
+        let entry = Entry {
+            hash: format!("b3:{}", blake3::hash(b"data").to_hex()),
+            size: 4,
+        };
+        let _guard = InitGuard::acquire(root).unwrap();
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        work.sync_interval = Duration::from_secs(10);
+        // Set synthetic timestamps rather than sleeping; no record-count trigger.
+        // A future timestamp keeps slow CI from reaching the time threshold.
+        let future = Instant::now() + Duration::from_secs(60);
+        work.last_sync = future;
+        for _ in 0..512 {
+            work.record(b"data", &meta, &entry).unwrap();
+        }
+        assert_eq!(work.last_sync, future);
+
+        // A longer configured interval must not flush at the default threshold.
+        work.sync_interval = Duration::from_secs(3600);
+        work.last_sync = Instant::now() - Duration::from_secs(60);
+        let not_expired = work.last_sync;
+        work.record(b"data", &meta, &entry).unwrap();
+        assert_eq!(work.last_sync, not_expired);
+
+        work.last_sync = Instant::now() - work.sync_interval;
+        let expired = work.last_sync;
+        work.record(b"data", &meta, &entry).unwrap();
+        assert!(work.last_sync > expired);
+
+        work.last_sync = future;
+        work.record(b"data", &meta, &entry).unwrap();
+        assert_eq!(work.last_sync, future);
+        let session = work.session.clone();
+        drop(work);
+        let mut work = Checkpoint::open(root, "init", None).unwrap();
+        assert_eq!(work.session, session);
+        assert_eq!(work.sync_interval, SYNC_INTERVAL);
+        assert_eq!(work.reuse(b"data", &meta).unwrap().hash, entry.hash);
+        work.finish().unwrap();
+        assert!(!root.join(".keeper/init.work").exists());
     }
 }

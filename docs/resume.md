@@ -70,9 +70,14 @@ exclusive `.keeper/LOCK` used for initialization. A work file contains:
   creation time in Unix nanoseconds and includes a random temporary-file suffix.
   Times are wall-clock observations, not a trusted monotonic history.
 
-Header creation is synced and published without replacement; **each completed-file
-record is synced** before moving on. The current file is reread after interruption:
-there is no partial-file BLAKE3-state serialization. Preflight and final metadata
+Header creation is synced and published without replacement. Completed-file rows
+are appended immediately; durability flushes are batched after **five seconds since
+the previous flush**, checked at file completion. There is no file-count trigger
+or background timer: hashing a large file or waiting in I/O
+can delay the next flush. Normal process cancellation or death leaves complete
+appends in the kernel cache; a system crash or power loss can lose the unsynced
+batch, causing those files to be reread. The current file is always reread after
+interruption: there is no partial-file BLAKE3-state serialization. Preflight and final metadata
 rechecks also repeat; resume avoids completed content reads, not traversal costs.
 A partial trailing row is discarded and the truncation synced on reopen. Complete
 bad checksums, invalid fields, unsafe paths, and wrong identities fail closed.
@@ -100,11 +105,11 @@ Repeated interrupted sessions with changed files grow the append-only journal;
 remove disposable work and restart if this becomes excessive. There is no journal
 compaction yet. Final file-stat rechecks add an O(paths) metadata pass.
 
-Per-file fsync is deliberately conservative and expensive for small-file corpora.
-Bounded lost content work is one in-flight file, not a fixed byte/time budget:
-one very large file may still require hours to reread. Tune checkpoint batching or
-partial-file work only after measurements and failure tests. Actual power-loss
-behavior depends on filesystem/hardware, not just process-kill tests.
+Batched fsync avoids a durability flush per small file, but still writes work to
+the dataset drive. After power loss, lost content work can include the unsynced
+batch and one in-flight file, not a fixed byte/time budget: one very large file
+may still require hours to reread. Actual power-loss behavior depends on
+filesystem/hardware, not just process-kill tests.
 
 See [qualification and measurements](qualification.md). Target-drive qualification
 and representative measurements remain required before a definitive whole-drive

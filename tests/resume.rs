@@ -26,7 +26,8 @@ fn baseline(root: &Path) -> Vec<Vec<u8>> {
 }
 
 // A tiny first file followed by a huge sparse file makes interruption independent
-// of disk speed. Wait for the durable first record, then signal during hashing.
+// of disk speed. Wait for the appended first record, then signal during hashing.
+// This checks process death, not power-loss durability of the unsynced batch.
 fn interrupt(root: &Path, operation: &str, signal: i32) -> Vec<u8> {
     interrupt_with_color(root, operation, signal, "never").0
 }
