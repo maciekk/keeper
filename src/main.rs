@@ -19,6 +19,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
 };
 
 #[derive(Parser)]
@@ -58,6 +59,9 @@ enum Command {
         /// Continue a checkpointed session (reuses earlier per-path reads, not a fresh scrub).
         #[arg(long)]
         resume: bool,
+        /// Flush resume work every N seconds, checked at file completion (default: 5).
+        #[arg(long, value_name = "SECONDS", requires = "resume", value_parser = clap::value_parser!(u64).range(1..))]
+        checkpoint_interval: Option<u64>,
     },
     /// Reread every byte by default and compare with the baseline; never accept changes.
     #[command(
@@ -70,6 +74,9 @@ enum Command {
         /// Continue a checkpointed session; writes disposable work state, never the baseline.
         #[arg(long)]
         resume: bool,
+        /// Flush resume work every N seconds, checked at file completion (default: 5).
+        #[arg(long, value_name = "SECONDS", requires = "resume", value_parser = clap::value_parser!(u64).range(1..))]
+        checkpoint_interval: Option<u64>,
     },
     /// Inventory metadata and list problems without reading file contents or creating a catalog.
     #[command(
@@ -126,7 +133,11 @@ fn root(path: &Path) -> Result<PathBuf> {
 
 fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool) -> Result<u8> {
     match cli.command {
-        Command::Init { root: path, resume } => {
+        Command::Init {
+            root: path,
+            resume,
+            checkpoint_interval,
+        } => {
             let root = root(&path)?;
             let guard = catalog::InitGuard::lock(&root)?;
             if guard.catalog_exists()? {
@@ -146,7 +157,13 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 return Ok(0);
             }
             let mut work = resume
-                .then(|| checkpoint::Checkpoint::open(&root, "init", None))
+                .then(|| {
+                    checkpoint::Checkpoint::open(&root, "init", None).map(|work| {
+                        work.with_sync_interval(Duration::from_secs(
+                            checkpoint_interval.unwrap_or(5),
+                        ))
+                    })
+                })
                 .transpose()?;
             let catalog = scan_session(&root, progress, work.as_mut(), out, color)?;
             cancel::check()?;
@@ -274,7 +291,11 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 roots,
             )?)
         }
-        Command::Status { root: path, resume } => {
+        Command::Status {
+            root: path,
+            resume,
+            checkpoint_interval,
+        } => {
             let root = root(&path)?;
             // Validate metadata before reading potentially terabytes of data.
             let _guard = resume
@@ -286,7 +307,13 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                 ".keeperignore differs from recorded catalog scope; restore the original policy before status (never delete a catalog to change scope)"
             );
             let mut work = resume
-                .then(|| checkpoint::Checkpoint::open(&root, "status", Some(&expected)))
+                .then(|| {
+                    checkpoint::Checkpoint::open(&root, "status", Some(&expected)).map(|work| {
+                        work.with_sync_interval(Duration::from_secs(
+                            checkpoint_interval.unwrap_or(5),
+                        ))
+                    })
+                })
                 .transpose()?;
             let observed = scan_session(&root, progress, work.as_mut(), out, color)?;
             ensure!(
