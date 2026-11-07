@@ -128,6 +128,11 @@ these readiness checks.
 Do not implement baseline updates as an overwrite of `paths.tsv`.
 
 - Specify review/accept semantics for additions, deletions, changes and renames.
+  Support the recurring growing-dataset workflow: review each replica against
+  its previous baseline, synchronize using an external tool and explicit authority
+  policy, verify current-tree agreement, then intentionally commit reviewed changes.
+  Accepting expected new files must not implicitly accept changed bytes in old files.
+  Agreement between replicas is evidence of equality, not authorization to rebaseline.
 - Design multi-generation atomic replacement, recovery, locking/read consistency,
   and generation/version compatibility, including lossless format migrations.
 - Revalidate observed bytes before acceptance; never promote a stale report.

@@ -57,6 +57,25 @@ it is **not a fresh full scrub**. See [resuming and recovery](docs/resume.md).
 "$K" compare /path/to/left /path/to/right
 ```
 
+### Compare offline, without accessing either drive
+
+Export each drive's existing baseline once while it is connected (reads only
+catalog metadata, not dataset contents):
+
+```sh
+mkdir -p ~/keeper-catalogs
+"$K" catalog export /path/to/ssd ~/keeper-catalogs/ssd
+"$K" catalog export /path/to/DATA2 ~/keeper-catalogs/DATA2
+
+# Both drives can now be disconnected:
+"$K" compare --catalogs ~/keeper-catalogs/ssd ~/keeper-catalogs/DATA2
+```
+
+Destinations must not already exist; use a new name for each snapshot. You can
+also compare existing local copies of complete `.keeper/catalog/` directories
+with `--catalogs`. Exported catalogs describe the recorded baseline, not changes
+made since hashing. No source-drive paths are resolved during offline comparison.
+
 Reports summarize implicated directories; add `--long` for individual files.
 Metadata-only checks cannot detect equal-sized content changes. Likely junk is
 classified, not excluded, and still counts as a difference. No comparison copies,
@@ -65,6 +84,54 @@ deletes, or changes your files.
 To establish reusable baselines for two drives, initialize each independently,
 then compare their catalogs. Follow the [replica workflow](docs/replica-workflow.md)
 for the full procedure, including preparation and later integrity checks.
+
+## Live files, baselines, and exported catalogs
+
+Keeper has three distinct sources of information:
+
+- **Live files:** the current contents of a dataset.
+- **Default catalog (`ROOT/.keeper/catalog/`):** the baseline recorded by `init`.
+  This is saved checksum information, not an automatically refreshed cache.
+- **Exported catalog:** an independent copy of that baseline elsewhere. Export
+  does not inspect current dataset contents or create a fresh observation of them.
+
+Commands select their inputs explicitly; there is no automatic detection or
+fallback from a missing catalog to hashing files:
+
+| Command | Inputs read |
+| --- | --- |
+| `compare LEFT RIGHT` | Each dataset root's `.keeper/catalog/` only |
+| `compare --catalogs LEFT RIGHT` | The two standalone catalog directories only |
+| `compare --live LEFT RIGHT` | Current files in both trees, freshly hashed |
+| `compare --metadata-only LEFT RIGHT` | Current paths and sizes, not file contents |
+| `status ROOT` | Default catalog plus freshly hashed current files |
+| `catalog check ROOT` | Default catalog only |
+| `catalog export ROOT DEST` | Default catalog; writes a new standalone copy |
+| `preflight ROOT` | Current filesystem metadata, not file contents |
+
+The comparison modes are mutually exclusive. Default comparison requires access
+only to the catalogs on the drives, not their data files. Export is optional:
+use it to avoid accessing the original drives at all. Drives need not be
+physically disconnected when comparing local exports.
+
+### Growing datasets and monthly checks
+
+**Rerunning `init` does not refresh a baseline.** An existing catalog is validated
+and summarized, not overwritten or extended. `status` reports additions, removals,
+and changes but never accepts them. Neither kind of comparison updates catalogs.
+
+For a monthly check, run `status` on each drive and investigate unexpected changes.
+Synchronize with your separate backup tool under an explicit source-to-backup
+policy, then use `compare --live` if you need to verify current-tree agreement,
+including newly added files. Stop writers during checks. Default `compare` still
+compares the old recorded baselines and cannot reveal subsequent additions.
+
+**Reviewing and accepting a newer baseline is not implemented yet.** The planned
+workflow must let users accept expected additions without automatically accepting
+unexpected changes to old files, preserve prior generations, and revalidate bytes
+before acceptance. Do not delete catalogs and rerun `init` to silence differences;
+that discards the baseline evidence. See the [replica workflow](docs/replica-workflow.md)
+and [acceptance roadmap](docs/roadmap.md#then-explicit-acceptance).
 
 ## Know the limits
 

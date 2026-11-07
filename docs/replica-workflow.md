@@ -92,6 +92,36 @@ Do not add a redundant `compare --live` immediately after independently hashing
 both trees unless you intentionally want another full read. Fresh comparison is
 useful for ad hoc checks without catalogs; it does not itself persist a baseline.
 
+### Recurring checks on a growing dataset
+
+The baseline is immutable in the current implementation. Rerunning `init`, even
+with `--resume`, validates and summarizes an existing catalog; it does not add new
+files or accept changes. `status` observes current bytes and reports differences
+without updating that baseline. An export is a copy of the recorded baseline,
+not a new observation of the live tree.
+
+For a monthly synchronization check:
+
+1. Run `status` independently on each drive. Review additions, removals, and
+   content changes; expected additions do not justify accepting changes to old
+   files. Investigate unexpected differences before propagating them.
+2. Synchronize with an external backup tool, following your explicit authority
+   policy. Keeper does not synchronize or repair data.
+3. With writers stopped, use `compare --live LEFT RIGHT` to verify current paths
+   and bytes, including new files. This reads both trees fully and does not save
+   a newer baseline. Agreement alone does not prove either copy is healthy.
+4. A future explicit acceptance operation should commit reviewed changes to new
+   baseline generations while preserving history. **This step is not implemented.**
+   Do not delete existing catalogs and reinitialize merely to clear differences.
+
+Ordinary `compare LEFT RIGHT` reads only the two default catalogs and will not
+see post-baseline additions. Missing or invalid catalogs cause errors, not an
+implicit live scan. `compare --catalogs LEFT RIGHT` instead reads standalone
+catalog directories; it never resolves or accesses the original dataset roots.
+Use `catalog export ROOT DEST` to save such a directory (destination must be new,
+with an existing parent), or copy the complete `.keeper/catalog/`. Drives may
+remain connected: disconnecting them is not a requirement for offline comparison.
+
 Progress can be recorded separately from reports:
 
 ```sh

@@ -26,7 +26,7 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -89,7 +89,7 @@ enum Command {
     },
     /// Compare catalogs, live bytes, or metadata only. Path-sensitive and read-only.
     #[command(
-        long_about = "Compare paths and full content IDs in two recorded catalogs. With --live, freshly read both trees without using or changing catalogs. With --metadata-only, compare current regular-file paths and sizes without opening files or using catalogs; equal sizes do NOT establish content equality. Empty directories and metadata such as timestamps are not compared. By default, report implicated directories with counts of differing files grouped by immediate parent (not recursive totals); --long also lists individual file differences. Root-level .keeperignore explicitly selects scan scope; recorded comparison uses saved policies, and differing policies return 2. Junk classification alone never excludes paths and is only a name-based heuristic, not a judgment of data value. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
+        long_about = "Compare paths and full content IDs in two recorded catalogs. By default LEFT and RIGHT are dataset roots, and only their .keeper/catalog directories are read. With --catalogs, LEFT and RIGHT are standalone catalog directories (exported with 'catalog export' or copied from .keeper/catalog); no original drive is accessed or required. With --live, freshly read both trees without using or changing catalogs. With --metadata-only, compare current regular-file paths and sizes without opening files or using catalogs; equal sizes do NOT establish content equality. Empty directories and metadata such as timestamps are not compared. By default, report implicated directories with counts of differing files grouped by immediate parent (not recursive totals); --long also lists individual file differences. Root-level .keeperignore explicitly selects scan scope; recorded comparison uses saved policies, and differing policies return 2. Junk classification alone never excludes paths and is only a name-based heuristic, not a judgment of data value. Roots must be distinct and non-overlapping. Stop writers on both trees; sequential scans are not a simultaneous snapshot.",
         after_help = "Examples:\n  keeper compare /data/primary /mnt/backup\n  keeper compare /data/primary /mnt/backup --live\n  keeper compare /data/primary /mnt/backup --metadata-only\n\nExit codes: 0 matching selected scope, 1 differences, 2 operational error or scope-policy mismatch."
     )]
     Compare {
@@ -101,6 +101,9 @@ enum Command {
         /// Compare current file paths and sizes only; no hashing, catalogs, or writes.
         #[arg(long)]
         metadata_only: bool,
+        /// Read standalone catalog directories, not dataset roots. Works with drives disconnected.
+        #[arg(long, conflicts_with_all = ["live", "metadata_only"])]
+        catalogs: bool,
         /// Add individual file differences to the default per-directory summary.
         #[arg(long)]
         long: bool,
@@ -114,6 +117,11 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CatalogCommand {
+    /// Export a validated baseline to a new local directory for offline comparison; no rehashing.
+    #[command(
+        after_help = "Example: keeper catalog export /mnt/DATA2 ~/catalogs/DATA2\nThe destination parent must exist. Existing destinations are never overwritten."
+    )]
+    Export { root: PathBuf, destination: PathBuf },
     /// Check checksums, canonical format, and path/object consistency; does not read dataset files.
     #[command(
         long_about = "Validate catalog checksums, canonical encoding, and path/object consistency. Dataset file contents are NOT read. Checksums detect accidental catalog damage, not coordinated malicious edits.",
@@ -200,6 +208,22 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             }
             Ok(0)
         }
+        Command::Catalog {
+            command:
+                CatalogCommand::Export {
+                    root: path,
+                    destination,
+                },
+        } => {
+            let catalog = catalog::load(&root(&path)?)?;
+            catalog::export(&catalog, &destination)?;
+            writeln!(
+                out,
+                "Exported catalog: {} file(s). Dataset bytes were not read.",
+                number(catalog.len())
+            )?;
+            Ok(0)
+        }
         Command::Preflight { root: path } => {
             let inventory = scan::preflight(&root(&path)?, progress)?;
             for issue in &inventory.issues {
@@ -226,6 +250,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             right,
             live,
             metadata_only,
+            catalogs,
             long,
         } => {
             let roots =
@@ -251,7 +276,12 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                     roots,
                 )?);
             }
-            let (left_catalog, right_catalog) = if live {
+            let (left_catalog, right_catalog) = if catalogs {
+                (
+                    catalog::read_generation(&left).context("left standalone catalog")?,
+                    catalog::read_generation(&right).context("right standalone catalog")?,
+                )
+            } else if live {
                 // Preflight BOTH before hashing either: discover avoidable late
                 // failures before spending hours reading the first drive.
                 progress.set_scope("Left ");

@@ -185,46 +185,55 @@ impl InitGuard {
     }
 
     pub fn publish(&self, catalog: &Catalog) -> Result<()> {
-        let (paths, objects) = tables(catalog)?;
-        let manifest = manifest(objects.as_bytes(), paths.as_bytes(), &catalog.policy);
-
-        let staging = tempfile::Builder::new()
-            .prefix(".init-")
-            .tempdir_in(&self.dir)?;
-        for (name, contents) in [
-            ("paths.tsv", paths),
-            ("objects.tsv", objects),
-            ("MANIFEST", manifest),
-        ] {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(staging.path().join(name))?;
-            file.write_all(contents.as_bytes())?;
-            file.sync_all()?;
-        }
-        if let Some(source) = &catalog.policy.source {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(staging.path().join("scope.ignore"))?;
-            file.write_all(source)?;
-            file.sync_all()?;
-        }
-        // Use the production reader before making a generation authoritative.
-        ensure!(
-            read_generation(staging.path())? == *catalog,
-            "catalog round-trip failed"
-        );
-        File::open(staging.path())?.sync_all()?;
-        // Linux RENAME_NOREPLACE: even an unrelated writer cannot cause init to
-        // replace an existing (including empty) catalog directory.
-        rename_no_replace(staging.path(), &self.dir.join("catalog"))?;
-        File::open(&self.dir)?
-            .sync_all()
-            .context("catalog published, but directory fsync failed; inspect with catalog check")?;
-        Ok(())
+        export(catalog, &self.dir.join("catalog"))
     }
+}
+
+/// Publish a validated standalone catalog without replacing an existing path.
+pub fn export(catalog: &Catalog, destination: &Path) -> Result<()> {
+    let parent = destination
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let (paths, objects) = tables(catalog)?;
+    let manifest = manifest(objects.as_bytes(), paths.as_bytes(), &catalog.policy);
+
+    let staging = tempfile::Builder::new()
+        .prefix(".init-")
+        .tempdir_in(parent)?;
+    for (name, contents) in [
+        ("paths.tsv", paths),
+        ("objects.tsv", objects),
+        ("MANIFEST", manifest),
+    ] {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(staging.path().join(name))?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+    }
+    if let Some(source) = &catalog.policy.source {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(staging.path().join("scope.ignore"))?;
+        file.write_all(source)?;
+        file.sync_all()?;
+    }
+    // Use the production reader before making a generation authoritative.
+    ensure!(
+        read_generation(staging.path())? == *catalog,
+        "catalog round-trip failed"
+    );
+    File::open(staging.path())?.sync_all()?;
+    // Linux RENAME_NOREPLACE: even an unrelated writer cannot cause init to
+    // replace an existing (including empty) catalog directory.
+    rename_no_replace(staging.path(), destination)?;
+    File::open(parent)?
+        .sync_all()
+        .context("catalog published, but directory fsync failed; inspect with catalog check")?;
+    Ok(())
 }
 
 pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
@@ -267,7 +276,7 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn read_generation(dir: &Path) -> Result<Catalog> {
+pub fn read_generation(dir: &Path) -> Result<Catalog> {
     ensure!(
         fs::symlink_metadata(dir)?.is_dir(),
         "catalog must be a real directory"

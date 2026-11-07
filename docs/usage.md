@@ -9,6 +9,8 @@ drives and checking them later, follow the [replica workflow](replica-workflow.m
 | --- | --- |
 | `preflight [ROOT]` | Metadata-only inventory: file counts, sizes, unsupported objects, and traversal errors |
 | `init [ROOT]` | Physically hash regular files and publish a self-checked initial catalog |
+| `catalog export ROOT DEST` | Save a validated standalone catalog to a new directory; reads no dataset bytes; destination parent must exist |
+| `compare --catalogs LEFT RIGHT` | Compare standalone catalog directories, with no access to the original drives |
 | `catalog check [ROOT]` | Catalog checksums, canonical encoding, and internal consistency; not dataset bytes |
 | `status [ROOT]` | Physically reread every regular file against the baseline; report added, missing, and changed paths |
 | `compare LEFT RIGHT` | Recorded paths, sizes, and full content IDs in two catalogs |
@@ -33,6 +35,7 @@ their readability, or test lock, sync, or publication support; hashing can still
 
 No commands accept changed content, copy, repair, or modify dataset files. `init`
 writes the initial catalog, and resumable operations write disposable work state.
+Catalog export writes only a new destination directory and never replaces an existing path.
 Plain status, preflight, catalog checks, and all comparisons do not write Keeper
 metadata. Reading may cause filesystem access-time updates.
 
