@@ -12,7 +12,7 @@ foundations, not disposable indexing experiments.
 | Genesis and physical status | Done: `85debcc` | Inspectable canonical format, no-overwrite init, catalog self-check, read-only full-byte drift detection |
 | Replica comparison | Done: `43766e6` | Explicit recorded vs live scope, preflight, stderr progress, failure tests, format-1 compatibility fixture |
 | Resumable large-drive operation | Implemented; qualification gate open | Opt-in checkpointed init/status and cancellation; actual target-filesystem qualification and representative measurements still required |
-| Explicit acceptance | Planned | Review and intentionally commit changes using safe multi-generation publication; never silently rebaseline |
+| Explicit acceptance | Design draft | Selectively commit intent revisions without rereading inherited files; safely publish and retain history |
 | Semantic validators | Planned | Object/validator-version evidence, direct subprocess orchestration, separate validity from byte identity |
 | Rolling maintenance | Planned | Age, failure, budget, and file-count selection with durable progress and honest per-replica physical evidence |
 | Richer backup comparison | Planned | Object-presence checks across renamed/moved trees, explicitly separate from exact replica comparison |
@@ -125,6 +125,14 @@ these readiness checks.
 
 ## Then: explicit acceptance
 
+The [tree intent and staggered verification draft](acceptance.md) specifies the
+minimal model and proposes a file layout and publication/recovery protocol.
+Immutable, locally numbered **intent revisions** record complete expectations;
+independent local observations record physical measurements. Verification compares
+the two. Accept only reviewed deltas without rereading inherited files. No unknown
+expected hashes, branching, distributed coordination or content-addressed revision
+IDs initially. Exact new text schemas and implementation remain pending.
+
 Do not implement baseline updates as an overwrite of `paths.tsv`.
 
 - Specify review/accept semantics for additions, deletions, changes and renames.
@@ -133,9 +141,12 @@ Do not implement baseline updates as an overwrite of `paths.tsv`.
   policy, verify current-tree agreement, then intentionally commit reviewed changes.
   Accepting expected new files must not implicitly accept changed bytes in old files.
   Agreement between replicas is evidence of equality, not authorization to rebaseline.
-- Design multi-generation atomic replacement, recovery, locking/read consistency,
-  and generation/version compatibility, including lossless format migrations.
-- Revalidate observed bytes before acceptance; never promote a stale report.
+- Implement atomic intent-reference publication, recovery, locking/read consistency,
+  and revision/format compatibility, including lossless metadata-only migration.
+  Preserve existing format-1/2 `generation` fields; the new intent format is separate.
+- Revalidate selected new/replacement bytes before acceptance; never promote a
+  stale report. Inherited expectations need no new physical read merely to create
+  an intent revision; carrying them forward must not refresh their read evidence.
 - Preserve the existing baseline on every rejected or failed acceptance.
 
 ## Later: semantic validation

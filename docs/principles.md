@@ -73,7 +73,7 @@ Keep these version concepts separate:
 | --- | --- |
 | Application version | Keeper implementation release, currently a Rust v2 rewrite |
 | Catalog format version | Meaning and encoding of authoritative metadata; 1 for unscoped catalogs, [2](catalog-v2.md) with recorded exclusions |
-| Catalog generation | An accepted state within a catalog, not a schema version; currently genesis only |
+| Intent revision (formerly catalog generation) | Immutable intended paths/content, not a schema version or physical-verification claim; existing formats still use genesis-only `generation` |
 | Cache/checkpoint version and session identity | Reconstructable per-path session work state; work format 1 unscoped / 2 policy-pinned, see [resume.md](resume.md) |
 | Validator identity/version | Which semantic check produced which evidence; not implemented yet |
 
@@ -87,7 +87,8 @@ Compatibility policy for future work:
    do not "upgrade" by scanning current files and accepting whatever is there.
 4. Construct and self-check migrated metadata separately. Preserve the original
    and publish safely; errors must not damage the only baseline. The concrete
-   multi-generation/migration protocol still needs design and implementation.
+   intent-revision publication/migration protocol is proposed in the
+   [design draft](acceptance.md); schemas and implementation remain pending.
 5. Do not discard authoritative evidence or invent freshness timestamps. If a
    conversion/export would lose information, it is not a lossless migration and
    must not be presented as one.
@@ -153,7 +154,8 @@ exclusion. Never silently weaken guarantees when a filesystem lacks required
 operations. Test failure paths, interruption, and actual target filesystems.
 
 Genesis no-replace publication and opt-in resumable checkpoints are implemented.
-Safe replacement of generations and migration publication are future work. Process-kill
+Safe publication of intent revisions and migration are future work; see the
+[proposed protocol](acceptance.md). Process-kill
 success is not proof of power-loss durability; filesystem and hardware guarantees
 still matter.
 

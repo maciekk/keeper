@@ -9,11 +9,15 @@ For current decisions and implementation status, use:
 
 - [Design principles and compatibility commitments](principles.md)
 - [Milestone progression and readiness gates](roadmap.md)
+- [Tree intent and staggered verification (design draft)](acceptance.md)
 - [Implemented catalog format](catalog-v1.md)
 - [Replica workflow](replica-workflow.md)
 
-These focused documents take precedence over tentative proposals below. In
-particular, semantic validation belongs to content objects, but a physical scrub
+These focused documents take precedence over tentative proposals below. The
+acceptance draft uses **intent revision** in place of “catalog generation” for
+future work; existing format fields are unchanged. It separates intent history
+from physical observations rather than storing verification status on revisions.
+In particular, semantic validation belongs to content objects, but a physical scrub
 must verify each copy independently; migration must preserve existing hash knowledge.
 
 ## Purpose
