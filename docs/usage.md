@@ -180,17 +180,21 @@ never establishes equality.
   `.git`, hidden-file, system-folder, or mount-point exclusions. Nested `.keeper`
   and `.keeperignore` paths are ordinary data unless explicitly excluded. Do not
   store user data in the root's `.keeper/`.
-- File identity, size, mtime, and ctime are checked before/after hashing; directory
-  changes during traversal are checked. This detects common races, not every
-  mutation after a file was checked. Keeper does not provide a snapshot or defend
-  against an attacker concurrently replacing ancestor directories.
+- File identity, size, mtime, and ctime are checked before/after hashing; selected
+  namespace membership is independently re-enumerated before/after hashing.
+  Equal metadata can conceal rapid same-size edits, notably on ntfs3. These checks
+  detect some races, not every concurrent mutation or change after a check.
+  Stop writers or use a read-only snapshot. Keeper does not provide a snapshot or
+  defend against an attacker concurrently replacing ancestor directories.
 - Inventories, catalog records, and preflight issues are held in RAM. Traversal
   and hashing are synchronous. Comparison holds information for both trees, and
   checkpoint records and their text also consume RAM. Memory grows with corpus
   and journal size; see [measurements and qualification](qualification.md).
-- Plain status and live comparison pay the full-data read cost. Resume reuses
+- Plain status and live comparison pay the full-data read cost. Resume may reuse
   earlier observations, not fresh evidence; an interrupted file must be reread.
-  Per-file checkpoint sync can be costly for small-file corpora.
+  NTFS/FAT/exFAT/FUSE files never reuse checkpoints and are rehashed every invocation,
+  including on nested mounts. See [resume restrictions](resume.md). Checkpoint sync
+  can be costly for small-file corpora.
 
 Initialization requires advisory locks, file/directory `fsync`, and Linux
 `renameat2(RENAME_NOREPLACE)`. Keeper does not fall back to unsafe overwrite.

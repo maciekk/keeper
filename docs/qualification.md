@@ -1,8 +1,13 @@
 # Filesystem qualification and resource measurements
 
-Resume is implemented, but **actual target drives have not been qualified**.
-No local smoke test establishes power-loss durability or terabyte-scale readiness.
-Keep originals and independent backups. Use only disposable samples here.
+Resume is implemented; target ext4 and NTFS samples have exposed important limits,
+not established blanket whole-drive readiness. No sample establishes power-loss
+durability or terabyte-scale readiness. Keep originals and independent backups.
+Use only disposable samples here.
+
+For repeatable preparation, tests, metadata probes, reports and off-device exports,
+use the maintained [qualification runner](qualification-runner.md). It also records
+the NTFS findings and conservative checkpoint policy.
 
 ## Qualify each intended mount
 

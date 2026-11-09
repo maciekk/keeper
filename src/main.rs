@@ -7,6 +7,7 @@ mod checkpoint;
 mod compare;
 mod display;
 mod encoding;
+mod filesystem;
 mod policy;
 mod progress;
 mod scan;
@@ -56,7 +57,7 @@ enum Command {
     Init {
         #[arg(default_value = ".")]
         root: PathBuf,
-        /// Continue a checkpointed session (reuses earlier per-path reads, not a fresh scrub).
+        /// Continue a checkpointed session (NTFS/FAT/exFAT/FUSE reread all files).
         #[arg(long)]
         resume: bool,
         /// Flush resume work every N seconds, checked at file completion (default: 5).
@@ -71,7 +72,7 @@ enum Command {
     Status {
         #[arg(default_value = ".")]
         root: PathBuf,
-        /// Continue a checkpointed session; writes disposable work state, never the baseline.
+        /// Continue a checkpointed session; never changes the baseline (NTFS/FAT/exFAT/FUSE reread all files).
         #[arg(long)]
         resume: bool,
         /// Flush resume work every N seconds, checked at file completion (default: 5).
@@ -421,7 +422,7 @@ fn scan_session(
             display::note(
                 out,
                 &format!(
-                    "Scope: checkpointed multi-invocation session {}.\n  - Earlier per-path reads may be reused; NOT a fresh full scrub.\n  - Metadata cannot detect silent corruption.\n  - Keep writers stopped throughout the session.",
+                    "Scope: checkpointed multi-invocation session {}.\n  - Earlier per-path reads may be reused; NOT a fresh full scrub.\n  - NTFS/FAT/exFAT/FUSE files are always reread; checkpoint reuse is disabled.\n  - Equal metadata does not prove unchanged bytes or detect every concurrent edit.\n  - Keep writers stopped throughout the session.",
                     work.session
                 ),
                 color,

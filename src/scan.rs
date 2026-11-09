@@ -201,16 +201,18 @@ pub fn hash_inventory_checkpointed(
         );
     }
     check_directories(root, &inventory)?;
+    check_namespace(root, &inventory, progress)?;
     progress.begin("Hashing", Some((inventory.file_count(), inventory.bytes)))?;
     let mut catalog = Catalog::new();
     catalog.policy = inventory.policy.clone();
     for (relative, meta) in &inventory.files {
         crate::cancel::check()?;
         let path = joined(root, relative);
-        let entry = match checkpoint
-            .as_mut()
-            .and_then(|work| work.reuse(relative, meta))
-        {
+        let reused = match checkpoint.as_mut() {
+            Some(work) => work.reuse(relative, meta)?,
+            None => None,
+        };
+        let entry = match reused {
             Some(entry) => entry,
             None => {
                 progress.begin_file(meta.len());
@@ -229,9 +231,12 @@ pub fn hash_inventory_checkpointed(
         progress.advance(1, 0)?;
         catalog.insert(relative.clone(), entry);
     }
+    progress.finish()?;
     check_directories(root, &inventory)?;
+    check_namespace(root, &inventory, progress)?;
     // In particular, reused observations must still refer to this physical path.
     for (relative, before) in &inventory.files {
+        crate::cancel::check()?;
         ensure!(
             same_file(before, &fs::symlink_metadata(joined(root, relative))?),
             "file {} changed during pass; stop writers and retry",
@@ -240,7 +245,6 @@ pub fn hash_inventory_checkpointed(
     }
     crate::cancel::check()?;
     inventory.policy.ensure_current(root)?;
-    progress.finish()?;
     Ok(catalog)
 }
 
@@ -258,6 +262,57 @@ fn check_directories(root: &Path, inventory: &Inventory) -> Result<()> {
             label(relative)
         );
     }
+    Ok(())
+}
+
+/// Re-enumerate selected membership independently of directory timestamps.
+/// Stream entries and look them up in the inventory: O(n log n), without a
+/// second full in-memory inventory. Still not an atomic namespace snapshot.
+fn check_namespace(root: &Path, inventory: &Inventory, progress: &mut Progress<'_>) -> Result<()> {
+    progress.begin("Recheck paths", None)?;
+    let mut files = 0usize;
+    let mut directories = 1usize; // the root itself
+    for relative_dir in inventory.directories.keys() {
+        crate::cancel::check()?;
+        for child in fs::read_dir(joined(root, relative_dir))? {
+            progress.advance(0, 0)?; // cancellation, including inside huge directories
+            let path = child?.path();
+            let relative = relative(root, &path);
+            let meta = fs::symlink_metadata(&path)?;
+            if relative == b".keeper" {
+                ensure!(meta.is_dir(), "reserved .keeper changed during pass");
+                continue;
+            }
+            if relative == b".keeperignore" {
+                continue;
+            }
+            if inventory.policy.excludes(&relative, meta.is_dir()) {
+                continue;
+            }
+            if meta.is_file() {
+                progress.advance(1, meta.len())?;
+            }
+            let known = if meta.is_dir() {
+                directories += 1;
+                inventory.directories.contains_key(&relative)
+            } else if meta.is_file() {
+                files += 1;
+                inventory.files.contains_key(&relative)
+            } else {
+                false
+            };
+            ensure!(
+                known,
+                "namespace changed since preflight at {}; stop writers and retry",
+                label(&relative)
+            );
+        }
+    }
+    ensure!(
+        files == inventory.files.len() && directories == inventory.directories.len(),
+        "namespace changed since preflight (missing selected paths); stop writers and retry"
+    );
+    progress.finish()?;
     Ok(())
 }
 
@@ -371,7 +426,10 @@ mod tests {
         let inventory = preflight(root, &mut progress).unwrap();
         let catalog =
             hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
-        assert_eq!(work.reused, 1);
+        assert_eq!(
+            work.reused,
+            u64::from(crate::filesystem::checkpoint_reuse_allowed(&root.join("data")).unwrap())
+        );
         assert_eq!(catalog.policy, Policy::load(root).unwrap());
         // Even an already-open journal cannot be used after scope changes.
         fs::write(root.join(".keeperignore"), b"/data\n").unwrap();
@@ -420,7 +478,10 @@ mod tests {
         let inventory = preflight(root, &mut progress).unwrap();
         let observed =
             hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
-        assert_eq!(work.reused, 1);
+        assert_eq!(
+            work.reused,
+            u64::from(crate::filesystem::checkpoint_reuse_allowed(&root.join("b")).unwrap())
+        );
         assert_eq!(
             observed[b"b".as_slice()].hash,
             format!("b3:{}", blake3::hash(b"modified").to_hex())
@@ -437,7 +498,10 @@ mod tests {
             hash_inventory_checkpointed(root, inventory, &mut progress, Some(&mut work)).unwrap();
         assert!(!observed.contains_key(b"a".as_slice()));
         assert!(observed.contains_key(b"new".as_slice()));
-        assert_eq!(work.reused, 2);
+        assert_eq!(
+            work.reused,
+            2 * u64::from(crate::filesystem::checkpoint_reuse_allowed(&root.join("b")).unwrap())
+        );
     }
 
     #[test]
@@ -475,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_mutation_during_read_even_with_restored_mtime() {
+    fn detects_metadata_visible_mutation_during_read() {
         use std::io::{Seek, SeekFrom, Write};
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("file");
@@ -487,10 +551,10 @@ mod tests {
                 let mut file = OpenOptions::new().write(true).open(&path)?;
                 file.seek(SeekFrom::Start(200_000))?;
                 file.write_all(b"changed")?;
-                // Deliberately change mtime, then restore it. ctime cannot be
-                // restored through this API, so metadata must still catch it.
+                // Force a visible timestamp difference without sleeps. A
+                // restored mtime + colliding ctime is NOT detectable by stat;
+                // checkpoint policy has a deterministic regression for that.
                 file.set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))?;
-                file.set_times(fs::FileTimes::new().set_modified(expected.modified()?))?;
                 changed = true;
             }
             Ok(())
@@ -507,6 +571,52 @@ mod tests {
         let inventory = preflight(tmp.path(), &mut progress).unwrap();
         fs::write(tmp.path().join("new"), b"new").unwrap();
         assert!(hash_inventory(tmp.path(), inventory, &mut progress).is_err());
+    }
+
+    #[test]
+    fn namespace_checks_do_not_trust_unchanged_directory_fingerprints() {
+        for action in ["add", "remove", "rename", "type"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path();
+            fs::write(root.join("a"), b"a").unwrap();
+            let mut sink = Vec::new();
+            let mut progress = Progress::new(&mut sink, false);
+            let mut inventory = preflight(root, &mut progress).unwrap();
+            match action {
+                "add" => fs::write(root.join("b"), b"b").unwrap(),
+                "remove" => fs::remove_file(root.join("a")).unwrap(),
+                "rename" => fs::rename(root.join("a"), root.join("b")).unwrap(),
+                "type" => {
+                    fs::remove_file(root.join("a")).unwrap();
+                    fs::create_dir(root.join("a")).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            // Make the saved directory identity equal to today's stat, modeling
+            // a coarse-timestamp collision on every filesystem, without sleeps.
+            inventory
+                .directories
+                .insert(Vec::new(), fs::symlink_metadata(root).unwrap());
+            check_directories(root, &inventory).unwrap();
+            assert!(
+                check_namespace(root, &inventory, &mut progress).is_err(),
+                "{action}"
+            );
+        }
+    }
+
+    #[test]
+    fn namespace_recheck_preserves_exact_exclusion_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join(".keeperignore"), b"/ignored/\n").unwrap();
+        fs::create_dir(root.join("ignored")).unwrap();
+        fs::create_dir(root.join("empty")).unwrap();
+        let mut sink = Vec::new();
+        let mut progress = Progress::new(&mut sink, false);
+        let inventory = preflight(root, &mut progress).unwrap();
+        fs::write(root.join("ignored/new"), b"excluded").unwrap();
+        check_namespace(root, &inventory, &mut progress).unwrap();
     }
 
     #[test]

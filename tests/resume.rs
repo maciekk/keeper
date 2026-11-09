@@ -18,6 +18,20 @@ fn run(root: &Path, args: &[&str], code: i32) -> String {
     String::from_utf8(result.stdout).unwrap()
 }
 
+fn expected_reused(root: &Path, count: u64) -> String {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let path = CString::new(root.as_os_str().as_bytes()).unwrap();
+    let mut info = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: path is NUL-terminated and info is writable statfs storage.
+    assert_eq!(unsafe { libc::statfs(path.as_ptr(), info.as_mut_ptr()) }, 0);
+    // SAFETY: the successful call initialized info.
+    let restricted = matches!(
+        unsafe { info.assume_init() }.f_type,
+        0x7366_746e | 0x5346_544e | 0x4d44 | 0x2011_bab0 | 0x6573_5546
+    );
+    format!("{} file(s) reused", if restricted { 0 } else { count })
+}
+
 fn baseline(root: &Path) -> Vec<Vec<u8>> {
     ["MANIFEST", "paths.tsv", "objects.tsv"]
         .iter()
@@ -153,7 +167,7 @@ fn clean_cancellation_and_process_death_resume_init_without_replacing_baseline()
             .unwrap();
         fs::remove_file(root.join("z-large")).unwrap();
         let report = run(root, &["init", "--resume"], 0);
-        assert!(report.contains("1 file(s) reused"));
+        assert!(report.contains(&expected_reused(root, 1)), "{report}");
         assert!(report.contains("NOT a fresh full scrub"));
         assert!(!root.join(".keeper/init.work").exists());
         run(root, &["catalog", "check"], 0);
@@ -175,7 +189,7 @@ fn resumed_status_keeps_baseline_and_plain_status_still_rereads() {
     interrupt(root, "status", libc::SIGTERM);
     fs::remove_file(root.join("z-large")).unwrap();
     let report = run(root, &["status", "--resume"], 0);
-    assert!(report.contains("1 file(s) reused"));
+    assert!(report.contains(&expected_reused(root, 1)), "{report}");
     assert!(report.contains("Checkpointed session:"));
     assert!(!report.contains("Full-byte check:"));
     assert!(!root.join(".keeper/status.work").exists());

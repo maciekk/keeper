@@ -1,7 +1,7 @@
 //! Disposable per-path observations, never an accepted baseline or fresh scrub.
 use crate::{
     catalog::{self, Catalog, Entry},
-    encoding,
+    encoding, filesystem,
     policy::Policy,
 };
 use anyhow::{Context, Result, ensure};
@@ -30,6 +30,10 @@ pub fn fingerprint(meta: &Metadata) -> String {
     )
 }
 
+fn reusable(allowed: bool, identity: &str, entry: &Entry, meta: &Metadata) -> bool {
+    allowed && identity == fingerprint(meta) && entry.size == meta.size()
+}
+
 fn now() -> Result<u128> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())
 }
@@ -53,6 +57,7 @@ fn verify(line: &str) -> Result<&str> {
 const SYNC_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Checkpoint {
+    root: PathBuf,
     path: PathBuf,
     file: File,
     records: BTreeMap<Vec<u8>, (String, Entry)>,
@@ -169,6 +174,7 @@ impl Checkpoint {
         file.set_len(end as u64)?;
         file.sync_all()?;
         Ok(Self {
+            root: root.to_path_buf(),
             path,
             file,
             records,
@@ -185,13 +191,19 @@ impl Checkpoint {
         self
     }
 
-    pub fn reuse(&mut self, path: &[u8], meta: &Metadata) -> Option<Entry> {
-        let (identity, entry) = self.records.get(path)?;
-        if *identity == fingerprint(meta) && entry.size == meta.size() {
+    pub fn reuse(&mut self, path: &[u8], meta: &Metadata) -> Result<Option<Entry>> {
+        let Some((identity, entry)) = self.records.get(path) else {
+            return Ok(None);
+        };
+        // Check the file's filesystem, not just the dataset root: a nested mount
+        // may have weaker timestamp semantics. Inspection failure fails closed.
+        let physical = self.root.join(std::ffi::OsStr::from_bytes(path));
+        let allowed = filesystem::checkpoint_reuse_allowed(&physical)?;
+        if reusable(allowed, identity, entry, meta) {
             self.reused += 1;
-            Some(entry.clone())
+            Ok(Some(entry.clone()))
         } else {
-            None
+            Ok(None)
         }
     }
 
@@ -227,6 +239,28 @@ impl Checkpoint {
 mod tests {
     use super::*;
     use crate::catalog::InitGuard;
+
+    #[test]
+    fn identical_fingerprints_do_not_override_a_reuse_restriction() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("data");
+        fs::write(&path, b"original").unwrap();
+        let observed = fs::metadata(&path).unwrap();
+        let identity = fingerprint(&observed);
+        let old = Entry {
+            hash: format!("b3:{}", blake3::hash(b"original").to_hex()),
+            size: 8,
+        };
+        fs::write(&path, b"modified").unwrap();
+        // Deliberately supply the same metadata for both versions. This models
+        // a timestamp collision deterministically, independently of test FS/HZ.
+        assert!(reusable(true, &identity, &old, &observed));
+        assert!(!reusable(false, &identity, &old, &observed));
+        assert_ne!(
+            old.hash,
+            format!("b3:{}", blake3::hash(&fs::read(path).unwrap()).to_hex())
+        );
+    }
 
     #[test]
     fn batches_sync_by_configured_interval_and_reopens_pending_rows() {
@@ -271,7 +305,13 @@ mod tests {
         let mut work = Checkpoint::open(root, "init", None).unwrap();
         assert_eq!(work.session, session);
         assert_eq!(work.sync_interval, SYNC_INTERVAL);
-        assert_eq!(work.reuse(b"data", &meta).unwrap().hash, entry.hash);
+        let observed = work.reuse(b"data", &meta).unwrap();
+        if filesystem::checkpoint_reuse_allowed(&root.join("data")).unwrap() {
+            assert_eq!(observed.unwrap().hash, entry.hash);
+        } else {
+            assert!(observed.is_none());
+            assert_eq!(work.reused, 0);
+        }
         work.finish().unwrap();
         assert!(!root.join(".keeper/init.work").exists());
     }

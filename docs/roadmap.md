@@ -65,6 +65,11 @@ retry, malformed catalogs, comparison scope, and refusal of symlinks/special obj
 SIGINT/SIGTERM cancellation, and session/root/baseline identity validation. Complete
 corrupt records fail closed; an interrupted trailing append is safely discarded.
 Changed file fingerprints are rehashed, including ctime changes with restored mtime.
+Equal fingerprints are not proof against concurrent edits. Target ntfs3 probes
+exposed rapid ordinary edits with unchanged timestamps; NTFS/FAT/exFAT/FUSE files
+now bypass reuse and are always rehashed, including on nested mounts. Selected
+namespace membership is re-enumerated independently of directory timestamps.
+See the [repeatable qualification runner and findings](qualification-runner.md).
 Each duplicate physical path has independent evidence. Tests exercise clean
 cancellation, forced process death, stale records, wrong roots/baselines, writer
 exclusion and unchanged format-1 baseline behavior.

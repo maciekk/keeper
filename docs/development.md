@@ -10,12 +10,14 @@ Requires Linux and a recent stable Rust toolchain (edition 2024):
 cargo fmt --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
+python -B -m unittest discover -s tools -p 'test_*.py'
 cargo build --release --locked
 ```
 
 The runnable binary is `target/release/keeper`. Tests use disposable data; testing
 on an actual target filesystem needs the precautions in
-[filesystem qualification](qualification.md). Local tests and process-kill tests
+[filesystem qualification](qualification.md) and its
+[repeatable runner](qualification-runner.md). Local tests and process-kill tests
 do not establish power-loss durability or whole-drive readiness.
 
 ## Why Rust?

@@ -42,7 +42,10 @@ records current bytes, not proof that they were good or format-valid. Back up
 
 For interruptible long scans, use `init --resume` or `status --resume` and repeat
 the same command after interruption. Resuming reuses earlier reads in that session;
-it is **not a fresh full scrub**. See [resuming and recovery](docs/resume.md).
+it is **not a fresh full scrub**. NTFS/FAT/exFAT/FUSE files are always reread;
+checkpoint reuse is disabled there because equal timestamps can conceal edits.
+Keep writers stopped throughout the session, including pauses. See
+[resuming and recovery](docs/resume.md).
 
 ## Compare two copies
 

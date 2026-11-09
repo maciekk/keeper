@@ -43,14 +43,29 @@ are local identity checks, not a persistent filesystem UUID or hostile-clone def
 remount/device-number changes can require restarting.
 
 Each completed **path**, not each content hash, has its own observation. A matching
-device, inode, size, nanosecond mtime and ctime permits reuse. Changed fingerprints
-are reread, newly discovered paths are read, and removed paths are not resurrected
-from work records. Directory identities are checked before/after the pass; all
-inventoried file identities are checked again before returning success.
+device, inode, size, nanosecond mtime and ctime can permit reuse, subject to the
+filesystem restrictions below. Changed fingerprints are reread, newly discovered
+paths are read, and removed paths are not resurrected from work records. Selected
+namespace membership is re-enumerated before/after hashing, independently of
+directory timestamps; all inventoried file identities are also checked again.
+These streaming rechecks add traversal/metadata cost, not another full inventory.
 
-These checks detect ordinary edits even with a restored mtime, **not silent
-corruption without metadata changes**, malicious timestamp manipulation, or every
-concurrent mutation. A reused record means “bytes read earlier in this session,”
+**NTFS (both kernel drivers), FAT, exFAT and FUSE do not reuse checkpointed file
+reads.** Every invocation rehashes their files, including files on nested mounts
+inside an otherwise unrestricted root. Work/session identity and corruption checks
+still apply; cancellation/recovery remains available, but saved reads do not reduce
+the next pass's byte-reading cost. FUSE is conservative because its filesystem
+identity does not identify the backing implementation (including ntfs-3g).
+Filesystem inspection errors fail closed. This known-risk restriction is not a
+certification of every other filesystem. Catalog/work formats are unchanged.
+
+Equal metadata is not proof of unchanged contents. On the tested `ntfs3` mount,
+rapid same-size ordinary edits, even without restoring mtime, retained the entire
+fingerprint. Fsync and waiting afterward did not reveal the change. NTFS's 100 ns
+stored timestamp precision does not imply distinct automatic timestamps for each
+write. See [qualification findings](qualification-runner.md#ntfs-findings-and-current-policy).
+No mode detects **silent corruption without reading the affected bytes**, malicious
+timestamp manipulation, or every concurrent mutation. A reused record means “bytes read earlier in this session,”
 never “bytes physically read now.” Run plain `status` for new full-byte evidence.
 Neither mode accepts changes or overwrites an existing baseline. Resumable init
 explicitly assembles its genesis baseline from these session observations; use
