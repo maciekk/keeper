@@ -25,7 +25,16 @@ python -B tools/qualify.py help run
 
 Preparation selects a deterministic bounded mix (default up to 1 GiB and 1,200
 files per sample, maximum individual file 512 MiB), with a metadata scan limit per
-explicit subtree. It copies source bytes once into two independent physical files;
+explicit subtree. Increase `--budget-mib`, `--max-files`, `--max-file-mib` and
+`--scan-limit` explicitly for larger trials. `--selection balanced` (the default)
+starts with a small/medium/large-file mix, then fills remaining capacity without
+hidden per-size-class ceilings. `--selection large-byte` prefers largest files;
+`--selection many-file` prefers smallest files to stress file-count overhead.
+Size ties use deterministic path hashes. All modes obey the byte/file limits and
+only select from the examined candidates; none is a uniform percentage sample.
+Many-file results can overrepresent empty/tiny files: inspect the manifest before
+interpreting throughput. Raise `run --timeout` (default 600 seconds per command)
+for larger trials. Space and read costs include two copies and multiple full passes. It copies source bytes once into two independent physical files;
 no reflinks or hard links to originals. The workspace must be on the source
 filesystem. Reports must be outside the source/workspace; choose another device.
 

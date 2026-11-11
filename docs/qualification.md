@@ -44,6 +44,48 @@ the NTFS findings and conservative checkpoint policy.
 Do not call a mount qualified based on preflight alone. Preflight reads metadata,
 not file contents, and does not test publication or durability support.
 
+## DATA SSD scale samples (2026-11-09)
+
+Two independent disposable-sample trials on DATA (ext4, `rw,relatime`, WD Blue
+SA510 SATA SSD), Linux 7.2.11-arch1-1, rustc 1.99.1, release build at `2aedc00`
+plus the sampling-tool changes recorded in each report's provenance. Both trials
+passed all 32 recorded command checks, including the complete Rust test suite on
+the mount, independent catalogs, physical/recorded comparisons, deliberate drift,
+immutable baselines, off-device exports, and SIGTERM/SIGKILL resume checks. No
+filename/hard-link capability limitations were reported.
+
+| Measurement | Large-byte sample | Many-file sample |
+| --- | ---: | ---: |
+| Files per independent copy | 23 | 100,000 |
+| Data per copy | 32 GiB | 70.06 MiB |
+| Preparation (both copies) | 243.90 s | 771.98 s |
+| Preflight A | 0.002 s | 0.787 s |
+| Init A, checkpointed | 65.454 s | 3.701 s |
+| Fresh status A | 64.607 s | 3.356 s |
+| Checkpointed status A (new session) | 65.126 s | 3.667 s |
+| Live comparison (both copies) | 129.101 s | 6.285 s |
+| Advisory-evicted status A | 65.658 s | 13.954 s |
+| Rewarmed status A | 64.645 s | 3.384 s |
+| Sampled peak RSS, fresh status A | 3.59 MiB | 129.59 MiB |
+| Sampled peak RSS, live comparison | 3.61 MiB | 160.54 MiB |
+
+Large-byte selection used up to 8 GiB individual files from three explicitly
+selected subtrees. Many-file selection preferred the smallest eligible files from
+three subtrees: this is a metadata/file-count workload, not a representative
+average file-size distribution. Preparation syncs both copies per file; it is not
+Keeper's scan time. Measurements are single runs. Cache eviction used advisory
+per-file `POSIX_FADV_DONTNEED`, not global cache drops or guaranteed cold storage.
+Sampled `/proc` peaks can miss short-lived allocations (especially preflight);
+see the exact per-command RSS measurements and conservative wait4 bounds in the
+reports rather than extrapolating a whole-drive memory bound.
+
+Private reports are retained off-device under
+`~/keeper-qualification-results/DATA-scale-20261109-174056/{large-byte,many-file}/`
+with manifests, source/binary fingerprints, environment, command logs, and exports.
+These successful samples support a monitored whole-drive verification attempt on
+this configuration; they do not establish whole-drive integrity, power-loss
+durability, or qualification of DATA2/other devices. Preserve independent backups.
+
 ## Local smoke measurements
 
 Release build, local `/home` Btrfs (`ssd,compress=zstd:3`), warm/newly written data:

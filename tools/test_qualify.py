@@ -14,7 +14,7 @@ class QualificationTests(unittest.TestCase):
     def args(self, root):
         return argparse.Namespace(source=str(root/'source'), workspace=str(root/'workspace'),
                                   report=str(root/'report'), subtree=None, budget_mib=1,
-                                  max_file_mib=1, max_files=20, scan_limit=100)
+                                  max_file_mib=1, max_files=20, scan_limit=100, selection='balanced')
 
     def test_selection_is_bounded_deterministic_and_has_no_duplicates(self):
         candidates = {f'f{i}': size for i, size in enumerate([0, 12, 1024, 80000, 90000, 10*qualify.MIB])}
@@ -23,6 +23,27 @@ class QualificationTests(unittest.TestCase):
         self.assertLessEqual(len(selected), 4)
         self.assertLessEqual(sum(size for _, size in selected), qualify.MIB)
         self.assertEqual(len(selected), len(set(name for name, _ in selected)))
+
+    def test_balanced_selection_has_no_hidden_size_class_ceiling(self):
+        for size, count in [(1024, 2500), (64*1024, 5000)]:
+            with self.subTest(size=size):
+                candidates = {f'f{i}': size for i in range(count)}
+                selected = qualify.select(candidates, 1024*qualify.MIB, count)
+                self.assertEqual(len(selected), count)
+                self.assertEqual(len({name for name, _ in selected}), count)
+
+    def test_workload_modes_are_deterministic_and_bounded(self):
+        candidates = {'empty': 0, 'small': 1, 'medium': 3, 'large': 8, 'huge': 20}
+        for mode, expected in [('large-byte', [('large', 8), ('small', 1)]),
+                               ('many-file', [('empty', 0), ('small', 1)])]:
+            with self.subTest(mode=mode):
+                selected = qualify.select(candidates, 9, 2, mode)
+                self.assertEqual(selected, expected)
+                self.assertEqual(selected, qualify.select(dict(reversed(list(candidates.items()))), 9, 2, mode))
+                self.assertLessEqual(sum(size for _, size in selected), 9)
+        self.assertEqual(qualify.select({'too-big': 20}, 9, 2, 'large-byte'), [])
+        with self.assertRaises(ValueError):
+            qualify.select(candidates, 9, 2, 'unknown')
 
     def test_prepare_produces_independent_copies_and_preserves_source(self):
         with tempfile.TemporaryDirectory() as tmp:

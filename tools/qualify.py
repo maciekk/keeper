@@ -61,8 +61,22 @@ def new_path(value):
     return parent / path.name
 
 
-def select(candidates, budget, max_files):
+def select(candidates, budget, max_files, selection='balanced'):
     items = sorted(candidates.items(), key=lambda x: hashlib.sha256(os.fsencode(x[0])).digest())
+    if selection in ('large-byte', 'many-file'):
+        # Stable hash order breaks size ties independently of traversal order.
+        items.sort(key=lambda x: -x[1] if selection == 'large-byte' else x[1])
+        chosen = []
+        used = 0
+        for item in items:
+            if len(chosen) >= max_files:
+                break
+            if used + item[1] <= budget:
+                chosen.append(item)
+                used += item[1]
+        return sorted(chosen)
+    if selection != 'balanced':
+        raise ValueError(f'unknown selection mode: {selection}')
     chosen = []
     used = 0
     for lo, hi, count, cap in [(0, 32*1024, 1000, budget),
@@ -79,6 +93,14 @@ def select(candidates, budget, max_files):
                 chosen.append(item)
                 used += item[1]
                 added += 1
+    # The initial mix is a preference, not a hidden ceiling on larger trials.
+    selected = {name for name, _ in chosen}
+    for item in items:
+        if len(chosen) >= max_files:
+            break
+        if item[0] not in selected and used + item[1] <= budget:
+            chosen.append(item)
+            used += item[1]
     return sorted(chosen)
 
 
@@ -135,7 +157,7 @@ def prepare(args):
         if errors:
             raise errors[0]
         scanned[subtree] = count
-    selected = select(candidates, args.budget_mib*MIB, args.max_files)
+    selected = select(candidates, args.budget_mib*MIB, args.max_files, args.selection)
     if not selected:
         raise ValueError("no eligible files selected")
     records = []
@@ -512,6 +534,8 @@ def parser():
     p.add_argument('--workspace',required=True,help='new directory on source filesystem')
     p.add_argument('--report',required=True,help='new directory outside source; prefer another device')
     p.add_argument('--subtree',action='append',help='relative directory to sample; repeatable (default: whole source)')
+    p.add_argument('--selection', choices=['balanced', 'large-byte', 'many-file'], default='balanced',
+                   help='balanced mix, largest files first, or smallest files first (within scan limits)')
     p.add_argument('--budget-mib',type=positive,default=1024)
     p.add_argument('--max-file-mib',type=positive,default=512)
     p.add_argument('--max-files',type=positive,default=1200)
