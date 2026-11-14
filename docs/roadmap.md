@@ -172,6 +172,53 @@ Do not implement baseline updates as an overwrite of `paths.tsv`.
   baseline. A sync failure after switching is explicitly uncertain publication,
   not guaranteed rollback; inspect `catalog check` before retrying.
 
+## Planned: removable-drive disconnect resilience
+
+An unexpected USB disconnect can damage filesystem metadata as well as interrupt
+Keeper work. One observed NTFS incident left `.keeper/LOCK` unreadable even to
+`stat` (`EINVAL`), following interrupted writes. This does not establish that
+LOCK was the only damaged file, or that Keeper caused the filesystem damage.
+Clearing the dirty bit is not equivalent to repairing the filesystem.
+
+Priorities and design directions (not implemented guarantees):
+
+- **Actionable errors:** include the operation and affected path for lock,
+  checkpoint, and publication failures. Distinguish lock contention from failure
+  to open or inspect a lock file. Never turn a filesystem error into advice to
+  silently reset a baseline.
+- **Optional host-local metadata:** design an explicit external/read-only dataset
+  mode storing catalogs, history, checkpoints, and locks on the internal disk.
+  Indexing should not write Keeper metadata to the source drive. Define dataset
+  registration and identity across remounts, mount-point changes, cloned drives,
+  and replacement media; do not rely on the mount path alone. Preserve explicit
+  scope, baseline, export, and recovery semantics. This reduces Keeper-generated
+  source-drive writes, not damage from other writers or hardware failures.
+- **Explicit recovery:** validate surviving catalogs/history before offering to
+  discard unusable disposable checkpoint state. Keep recovery distinct from
+  accepting changed bytes; never delete or replace an authoritative baseline to
+  make an error disappear. Filesystem repair remains outside Keeper's remit.
+- **Disconnect qualification:** supplement process-crash tests with controlled
+  interrupted-I/O, device-loss, and publication-failure tests on disposable media
+  or suitable fault-injection setups, including representative NTFS and external
+  drive configurations. Check preservation of the prior baseline, validation of
+  surviving state, uncertain-publication reporting, and safe restart behavior.
+
+Lock safety constraints:
+
+- The current lock file is empty and is not rewritten on each acquisition;
+  exclusion comes from a kernel lock released when the process exits. An
+  unreadable file record is not merely a stale held lock.
+- Never automatically unlink/recreate LOCK: a writer may still hold the old
+  inode's lock while another locks the replacement, defeating exclusion.
+- Moving only locking to the host requires consistent dataset identity and use
+  across all commands. Host-local locks cannot coordinate writers on different
+  hosts accessing a shared filesystem. Do not silently fall back to local locks
+  when an on-drive lock cannot be opened. Define compatibility with older builds
+  before introducing another locking protocol.
+- Existing flushing and atomic publication reduce interruption risk but cannot
+  promise filesystem/device-level recovery after unplugging. Preserve safe-eject
+  guidance and avoid claiming that local metadata makes unsafe removal harmless.
+
 ## Later: semantic validation
 
 - Separate known bytes from structural validity. Invoke validators directly,
