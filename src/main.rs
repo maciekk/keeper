@@ -1,6 +1,7 @@
 #[cfg(not(target_os = "linux"))]
 compile_error!("Keeper currently supports Linux only.");
 
+mod accept;
 mod cancel;
 mod catalog;
 mod checkpoint;
@@ -28,7 +29,7 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  accept plan ROOT PLAN      Review explicit --add/--replace/--remove paths\n  accept show PLAN           Inspect saved actions without accessing data\n  accept apply ROOT PLAN     Publish reviewed changes; revalidate selected bytes\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -110,11 +111,41 @@ enum Command {
         #[arg(long)]
         long: bool,
     },
+    /// Review and selectively accept changes into immutable intent revisions.
+    Accept {
+        #[command(subcommand)]
+        command: AcceptCommand,
+    },
     /// Inspect authoritative catalog metadata.
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum AcceptCommand {
+    /// Read only selected paths and save an exact-parent plan. Paths are relative to ROOT.
+    #[command(
+        after_help = "Example: keeper accept plan /data/photos review.plan --add new.jpg\nRepeat --add, --replace, or --remove for each explicit path. Rename is remove + add.\nNo globs, recursive enrollment, implicit deletions, or scope changes. Stop writers."
+    )]
+    Plan {
+        root: PathBuf,
+        destination: PathBuf,
+        #[arg(long, value_name = "PATH")]
+        add: Vec<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        replace: Vec<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        remove: Vec<PathBuf>,
+    },
+    /// Display exact actions, hashes and sizes without accessing the dataset.
+    Show { plan: PathBuf },
+    /// Authorize a reviewed plan; reread selected bytes and publish all actions or none.
+    #[command(
+        after_help = "Example: keeper accept apply /data/photos review.plan\nStop writers throughout. Inherited files are not reread. Stale plans fail, never rebase.\nA sync failure after switching CURRENT is uncertain publication: inspect catalog check before retrying."
+    )]
+    Apply { root: PathBuf, plan: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -183,6 +214,36 @@ fn load_baseline(root: &Path, out: &mut impl Write) -> Result<catalog::Catalog> 
 
 fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool) -> Result<u8> {
     match cli.command {
+        Command::Accept { command } => {
+            match command {
+                AcceptCommand::Plan {
+                    root: path,
+                    destination,
+                    add,
+                    replace,
+                    remove,
+                } => {
+                    accept::plan(&root(&path)?, &destination, add, replace, remove, progress)?;
+                    accept::show(&destination, out)?;
+                    writeln!(
+                        out,
+                        "Plan saved. Review with keeper accept show; authorize with keeper accept apply."
+                    )?;
+                }
+                AcceptCommand::Show { plan } => accept::show(&plan, out)?,
+                AcceptCommand::Apply { root: path, plan } => {
+                    let revision = accept::apply(&root(&path)?, &plan, progress)?;
+                    writeln!(
+                        out,
+                        "Published intent R{} ({}) with {} file(s).\nPrior revisions preserved. Inherited files were NOT reread; no fresh verification is implied.",
+                        revision.number,
+                        revision.checksum,
+                        number(revision.catalog.len())
+                    )?;
+                }
+            }
+            Ok(0)
+        }
         Command::Catalog {
             command: CatalogCommand::Migrate { root: path },
         } => {

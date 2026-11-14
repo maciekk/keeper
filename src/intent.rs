@@ -321,8 +321,6 @@ fn switch(store: &Path, revision: &Revision) -> Result<()> {
 }
 
 /// Caller holds LOCK and has freshly revalidated the selected actions.
-// Used by the forthcoming selective-acceptance command.
-#[allow(dead_code)]
 pub fn publish(root: &Path, parent: &Revision, catalog: &Catalog) -> Result<Revision> {
     publish_named(root, parent, catalog, None)
 }

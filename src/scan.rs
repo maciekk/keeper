@@ -316,7 +316,7 @@ fn check_namespace(root: &Path, inventory: &Inventory, progress: &mut Progress<'
     Ok(())
 }
 
-fn same_file(a: &Metadata, b: &Metadata) -> bool {
+pub(crate) fn same_file(a: &Metadata, b: &Metadata) -> bool {
     a.dev() == b.dev()
         && a.ino() == b.ino()
         && a.size() == b.size()
@@ -326,7 +326,7 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
         && a.ctime_nsec() == b.ctime_nsec()
 }
 
-fn hash_file(
+pub(crate) fn hash_file(
     path: &Path,
     expected: &Metadata,
     on_read: impl FnMut(u64) -> Result<()>,
