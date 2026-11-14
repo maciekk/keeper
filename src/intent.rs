@@ -17,10 +17,7 @@ pub struct Revision {
     parent_checksum: String,
     pub checksum: String,
     pub catalog: Catalog,
-    // Consumed by the forthcoming named-snapshot CLI.
-    #[allow(dead_code)]
     pub message: Option<String>,
-    #[allow(dead_code)]
     pub recorded_ns: u128,
 }
 

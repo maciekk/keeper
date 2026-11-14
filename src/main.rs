@@ -8,6 +8,7 @@ mod checkpoint;
 mod compare;
 mod display;
 mod encoding;
+mod everyday;
 mod filesystem;
 mod intent;
 mod policy;
@@ -17,6 +18,7 @@ mod scan;
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
 use display::{label, number};
+use everyday::{Kind, Options as AcceptOptions};
 use progress::Progress;
 use std::{
     io::{self, IsTerminal, Write},
@@ -29,9 +31,12 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  accept plan ROOT PLAN      Review explicit --add/--replace/--remove paths\n  accept show PLAN           Inspect saved actions without accessing data\n  accept apply ROOT PLAN     Publish reviewed changes; revalidate selected bytes\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  add [PATH...]              Accept new files only (not existing-file edits)\n  rm [PATH...]               Accept observed deletions; never delete files\n  update PATH...             Accept deliberate edits to named tracked files\n  mv OLD NEW                 Accept an already-performed, unchanged file move\n  snap -m MESSAGE [PATH...]  Review mixed changes and record a named snapshot\n  snap --mark -m MESSAGE     Name current expectations without checking live files\n  log                        List snapshots and acceptance history\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  accept plan ROOT PLAN      Review explicit --add/--replace/--remove paths\n  accept show PLAN           Inspect saved actions without accessing data\n  accept apply ROOT PLAN     Publish reviewed changes; revalidate selected bytes\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nShort commands use the current directory as the dataset root by default.\n--root ROOT explicitly selects a dataset; selectors then become dataset-relative. External paths remain shell-relative.\nLegacy ROOT arguments default to the current directory.\nShort acceptance commands confirm once; use --dry-run to preview or --yes for scripts.\nRoot-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
+    /// Dataset root (default: current directory). Does not change the working directory.
+    #[arg(long = "root", value_name = "ROOT", global = true)]
+    dataset_root: Option<PathBuf>,
     /// Progress on stderr: auto enables it only on a terminal.
     #[arg(long, value_enum, default_value = "auto", global = true)]
     progress: ProgressMode,
@@ -51,14 +56,60 @@ enum ProgressMode {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Accept new files only; existing files' expectations are never updated.
+    Add {
+        /// Files/directories relative to the dataset root; default: all additions.
+        paths: Vec<PathBuf>,
+        #[command(flatten)]
+        options: AcceptOptions,
+    },
+    /// Accept already-deleted files; NEVER deletes physical files.
+    Rm {
+        /// Tracked files/directory prefixes; default: all observed deletions.
+        paths: Vec<PathBuf>,
+        #[command(flatten)]
+        options: AcceptOptions,
+    },
+    /// Accept deliberate edits to named tracked files; no directory or bulk update.
+    Update {
+        #[arg(required = true, num_args = 1..)]
+        paths: Vec<PathBuf>,
+        #[command(flatten)]
+        options: AcceptOptions,
+    },
+    /// Accept an already-performed file move with unchanged bytes; NEVER moves files.
+    Mv {
+        old: PathBuf,
+        new: PathBuf,
+        #[command(flatten)]
+        options: AcceptOptions,
+    },
+    /// Review mixed changes and record a named snapshot of expectations, NOT file copies.
+    #[command(
+        after_help = "Examples:\n  keeper --root /photos snap -m 'Session finished'\n  keeper --root /photos snap --mark -m 'Before editing'\n\nDefault: read selected files to discover edits, then review additions/updates/deletions.\n--mark: name the current baseline WITHOUT reading or accepting live changes.\nSnapshots cannot restore contents without independent versioned backups."
+    )]
+    Snap {
+        /// Optional scope; default: all files. No scope is allowed with --mark.
+        #[arg(conflicts_with = "mark")]
+        paths: Vec<PathBuf>,
+        #[arg(short, long)]
+        message: String,
+        /// Record only the current expectations; do not inspect live files.
+        #[arg(long)]
+        mark: bool,
+        #[command(flatten)]
+        options: AcceptOptions,
+    },
+    /// List accepted history and named snapshots; no dataset bytes are read.
+    Log,
     /// Record the current bytes as a baseline; does NOT certify that they are good.
     #[command(
         long_about = "Record current regular-file bytes in a new baseline. This does NOT certify semantic validity. If a catalog already exists, validates it and shows its recorded summary without rescanning or overwriting it. Root-level .keeperignore exclusions are recorded with the baseline. Stop dataset writers first.",
         after_help = "Examples:\n  keeper init /data/photos\n  keeper init /data/photos --resume\n\n--resume reuses checkpointed per-path reads; it is NOT a fresh full scrub."
     )]
     Init {
-        #[arg(default_value = ".")]
-        root: PathBuf,
+        #[arg(conflicts_with = "dataset_root")]
+        root: Option<PathBuf>,
         /// Continue a checkpointed session (NTFS/FAT/exFAT/FUSE reread all files).
         #[arg(long)]
         resume: bool,
@@ -72,8 +123,8 @@ enum Command {
         after_help = "Examples:\n  keeper status /data/photos\n  keeper status /data/photos --resume\n\nExit codes: 0 unchanged, 1 differences, 2 operational error.\n--resume reuses earlier reads; it is NOT a fresh full scrub."
     )]
     Status {
-        #[arg(default_value = ".")]
-        root: PathBuf,
+        #[arg(conflicts_with = "dataset_root")]
+        root: Option<PathBuf>,
         /// Continue a checkpointed session; never changes the baseline (NTFS/FAT/exFAT/FUSE reread all files).
         #[arg(long)]
         resume: bool,
@@ -87,8 +138,8 @@ enum Command {
         after_help = "Example: keeper preflight /data/photos\nExit codes: 0 no issues, 2 issues or operational error."
     )]
     Preflight {
-        #[arg(default_value = ".")]
-        root: PathBuf,
+        #[arg(conflicts_with = "dataset_root")]
+        root: Option<PathBuf>,
     },
     /// Compare catalogs, live bytes, or metadata only. Path-sensitive and read-only.
     #[command(
@@ -155,8 +206,8 @@ enum CatalogCommand {
         after_help = "Example: keeper catalog migrate /data/photos\nPreserves the original in .keeper/legacy-catalog. No dataset contents are read.\nDo not use older Keeper versions on migrated roots. Back up the entire intent store for history."
     )]
     Migrate {
-        #[arg(default_value = ".")]
-        root: PathBuf,
+        #[arg(conflicts_with = "dataset_root")]
+        root: Option<PathBuf>,
     },
     /// Export a validated baseline to a new local directory for offline comparison; no rehashing.
     #[command(
@@ -169,8 +220,8 @@ enum CatalogCommand {
         after_help = "Example: keeper catalog check /data/photos"
     )]
     Check {
-        #[arg(default_value = ".")]
-        root: PathBuf,
+        #[arg(conflicts_with = "dataset_root")]
+        root: Option<PathBuf>,
     },
 }
 
@@ -213,7 +264,97 @@ fn load_baseline(root: &Path, out: &mut impl Write) -> Result<catalog::Catalog> 
 }
 
 fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool) -> Result<u8> {
+    let dataset = cli.dataset_root.as_deref();
+    ensure!(
+        dataset.is_none()
+            || !matches!(
+                &cli.command,
+                Command::Compare { .. }
+                    | Command::Accept { .. }
+                    | Command::Catalog {
+                        command: CatalogCommand::Export { .. }
+                    }
+            ),
+        "--root is not used with compare, catalog export or advanced accept commands; use their explicit root/path arguments"
+    );
+    let resolve = |positional: Option<&Path>| {
+        ensure!(
+            positional.is_none() || dataset.is_none(),
+            "specify the dataset with either --root or a positional ROOT, not both"
+        );
+        root(positional.or(dataset).unwrap_or(Path::new(".")))
+    };
     match cli.command {
+        Command::Add { paths, options } => {
+            everyday::run(
+                &resolve(None)?,
+                Kind::Add,
+                paths,
+                None,
+                &options,
+                out,
+                progress,
+            )?;
+            Ok(0)
+        }
+        Command::Rm { paths, options } => {
+            everyday::run(
+                &resolve(None)?,
+                Kind::Remove,
+                paths,
+                None,
+                &options,
+                out,
+                progress,
+            )?;
+            Ok(0)
+        }
+        Command::Update { paths, options } => {
+            everyday::run(
+                &resolve(None)?,
+                Kind::Update,
+                paths,
+                None,
+                &options,
+                out,
+                progress,
+            )?;
+            Ok(0)
+        }
+        Command::Mv { old, new, options } => {
+            let paths = vec![old, new];
+            everyday::run(
+                &resolve(None)?,
+                Kind::Move,
+                paths,
+                None,
+                &options,
+                out,
+                progress,
+            )?;
+            Ok(0)
+        }
+        Command::Snap {
+            paths,
+            message,
+            mark,
+            options,
+        } => {
+            everyday::run(
+                &resolve(None)?,
+                if mark { Kind::Mark } else { Kind::Snap },
+                paths,
+                Some(&message),
+                &options,
+                out,
+                progress,
+            )?;
+            Ok(0)
+        }
+        Command::Log => {
+            everyday::log(&resolve(None)?, out)?;
+            Ok(0)
+        }
         Command::Accept { command } => {
             match command {
                 AcceptCommand::Plan {
@@ -247,7 +388,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
         Command::Catalog {
             command: CatalogCommand::Migrate { root: path },
         } => {
-            let revision = intent::migrate(&root(&path)?)?;
+            let revision = intent::migrate(&resolve(path.as_deref())?)?;
             writeln!(
                 out,
                 "Migrated baseline to intent R{} ({}). Dataset bytes were not read.\nOriginal retained in .keeper/legacy-catalog. Back up .keeper/intent/ to preserve history.\nDo not use older Keeper builds on this root.",
@@ -260,7 +401,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             resume,
             checkpoint_interval,
         } => {
-            let root = root(&path)?;
+            let root = resolve(path.as_deref())?;
             let guard = catalog::InitGuard::lock(&root)?;
             if intent::exists(&root)? || guard.catalog_exists()? {
                 let catalog = catalog::load(&root)
@@ -310,7 +451,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
         Command::Catalog {
             command: CatalogCommand::Check { root: path },
         } => {
-            let root = root(&path)?;
+            let root = resolve(path.as_deref())?;
             let catalog = load_baseline(&root, out)?;
             writeln!(
                 out,
@@ -354,7 +495,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             Ok(0)
         }
         Command::Preflight { root: path } => {
-            let inventory = scan::preflight(&root(&path)?, progress)?;
+            let inventory = scan::preflight(&resolve(path.as_deref())?, progress)?;
             for issue in &inventory.issues {
                 writeln!(out, "{}", display::label(issue, color))?;
             }
@@ -455,7 +596,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             resume,
             checkpoint_interval,
         } => {
-            let root = root(&path)?;
+            let root = resolve(path.as_deref())?;
             // Validate metadata before reading potentially terabytes of data.
             let _guard = resume
                 .then(|| catalog::InitGuard::lock(&root))
