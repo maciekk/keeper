@@ -6,6 +6,7 @@ mod cancel;
 mod catalog;
 mod checkpoint;
 mod compare;
+mod dataset;
 mod display;
 mod encoding;
 mod everyday;
@@ -17,6 +18,7 @@ mod scan;
 
 use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
+use dataset::Selection;
 use display::{label, number};
 use everyday::{Kind, Options as AcceptOptions};
 use progress::Progress;
@@ -31,10 +33,10 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  add [PATH...]              Accept new files only (not existing-file edits)\n  rm [PATH...]               Accept observed deletions; never delete files\n  update PATH...             Accept deliberate edits to named tracked files\n  mv OLD NEW                 Accept an already-performed, unchanged file move\n  snap -m MESSAGE [PATH...]  Review mixed changes and record a named snapshot\n  snap --mark -m MESSAGE     Name current expectations without checking live files\n  log                        List snapshots and acceptance history\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  accept plan ROOT PLAN      Review explicit --add/--replace/--remove paths\n  accept show PLAN           Inspect saved actions without accessing data\n  accept apply ROOT PLAN     Publish reviewed changes; revalidate selected bytes\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nShort commands use the current directory as the dataset root by default.\n--root ROOT explicitly selects a dataset; selectors then become dataset-relative. External paths remain shell-relative.\nLegacy ROOT arguments default to the current directory.\nShort acceptance commands confirm once; use --dry-run to preview or --yes for scripts.\nRoot-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  add [PATH...]              Accept new files only (not existing-file edits)\n  rm [PATH...]               Accept observed deletions; never delete files\n  update PATH...             Accept deliberate edits to named tracked files\n  mv OLD NEW                 Accept an already-performed, unchanged file move\n  snap -m MESSAGE [PATH...]  Review mixed changes and record a named snapshot\n  snap --mark -m MESSAGE     Name current expectations without checking live files\n  log                        List snapshots and acceptance history\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  accept plan ROOT PLAN      Review explicit --add/--replace/--remove paths\n  accept show PLAN           Inspect saved actions without accessing data\n  accept apply ROOT PLAN     Publish reviewed changes; revalidate selected bytes\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nShort commands discover the nearest enclosing dataset; selectors are current-directory-relative and bare commands select the current subtree.\n--root ROOT explicitly selects a dataset; selectors then become dataset-relative. External paths remain shell-relative.\nLegacy ROOT arguments default to the current directory.\nShort acceptance commands confirm once; use --dry-run to preview or --yes for scripts.\nRoot-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
-    /// Dataset root (default: current directory). Does not change the working directory.
+    /// Select the dataset explicitly; short commands otherwise find the nearest enclosing dataset.
     #[arg(long = "root", value_name = "ROOT", global = true)]
     dataset_root: Option<PathBuf>,
     /// Progress on stderr: auto enables it only on a terminal.
@@ -58,14 +60,14 @@ enum ProgressMode {
 enum Command {
     /// Accept new files only; existing files' expectations are never updated.
     Add {
-        /// Files/directories relative to the dataset root; default: all additions.
+        /// Files/directories relative to cwd (or --root); default: additions in that subtree.
         paths: Vec<PathBuf>,
         #[command(flatten)]
         options: AcceptOptions,
     },
     /// Accept already-deleted files; NEVER deletes physical files.
     Rm {
-        /// Tracked files/directory prefixes; default: all observed deletions.
+        /// Files/directory prefixes relative to cwd (or --root); default: deletions in that subtree.
         paths: Vec<PathBuf>,
         #[command(flatten)]
         options: AcceptOptions,
@@ -89,7 +91,7 @@ enum Command {
         after_help = "Examples:\n  keeper --root /photos snap -m 'Session finished'\n  keeper --root /photos snap --mark -m 'Before editing'\n\nDefault: read selected files to discover edits, then review additions/updates/deletions.\n--mark: name the current baseline WITHOUT reading or accepting live changes.\nSnapshots cannot restore contents without independent versioned backups."
     )]
     Snap {
-        /// Optional scope; default: all files. No scope is allowed with --mark.
+        /// Optional scope relative to cwd (or --root); default: that subtree. Not allowed with --mark.
         #[arg(conflicts_with = "mark")]
         paths: Vec<PathBuf>,
         #[arg(short, long)]
@@ -286,8 +288,10 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
     };
     match cli.command {
         Command::Add { paths, options } => {
+            let selection = Selection::resolve(dataset)?;
+            let paths = selection.paths(paths, false)?;
             everyday::run(
-                &resolve(None)?,
+                &selection.root,
                 Kind::Add,
                 paths,
                 None,
@@ -298,8 +302,10 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             Ok(0)
         }
         Command::Rm { paths, options } => {
+            let selection = Selection::resolve(dataset)?;
+            let paths = selection.paths(paths, false)?;
             everyday::run(
-                &resolve(None)?,
+                &selection.root,
                 Kind::Remove,
                 paths,
                 None,
@@ -310,8 +316,10 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             Ok(0)
         }
         Command::Update { paths, options } => {
+            let selection = Selection::resolve(dataset)?;
+            let paths = selection.paths(paths, false)?;
             everyday::run(
-                &resolve(None)?,
+                &selection.root,
                 Kind::Update,
                 paths,
                 None,
@@ -322,9 +330,10 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             Ok(0)
         }
         Command::Mv { old, new, options } => {
-            let paths = vec![old, new];
+            let selection = Selection::resolve(dataset)?;
+            let paths = selection.paths(vec![old, new], false)?;
             everyday::run(
-                &resolve(None)?,
+                &selection.root,
                 Kind::Move,
                 paths,
                 None,
@@ -340,8 +349,10 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             mark,
             options,
         } => {
+            let selection = Selection::resolve(dataset)?;
+            let paths = selection.paths(paths, mark)?;
             everyday::run(
-                &resolve(None)?,
+                &selection.root,
                 if mark { Kind::Mark } else { Kind::Snap },
                 paths,
                 Some(&message),
@@ -352,7 +363,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             Ok(0)
         }
         Command::Log => {
-            everyday::log(&resolve(None)?, out)?;
+            everyday::log(&Selection::resolve(dataset)?.root, out)?;
             Ok(0)
         }
         Command::Accept { command } => {
