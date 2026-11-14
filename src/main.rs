@@ -8,6 +8,7 @@ mod compare;
 mod display;
 mod encoding;
 mod filesystem;
+mod intent;
 mod policy;
 mod progress;
 mod scan;
@@ -27,7 +28,7 @@ use std::{
 #[command(
     version,
     about = "An inspectable integrity catalog. Never silently accepts changes.",
-    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
+    after_help = "Command syntax:\n  init [ROOT] [--resume]       Record a baseline of current bytes\n  status [ROOT] [--resume]     Compare file bytes against the baseline\n  preflight [ROOT]            Inspect metadata without reading contents\n  compare LEFT RIGHT [--live] Compare catalogs; --live reads bytes, --metadata-only checks paths/sizes\n  catalog check [ROOT]        Validate catalog metadata only\n  catalog export ROOT DEST   Save a catalog for offline comparison\n  catalog migrate [ROOT]      Migrate metadata to immutable intent R1\n  help [COMMAND]...           Show detailed help (e.g. help catalog check)\n\nROOT defaults to the current directory. Root-level .keeperignore defines explicit exclusions. Use 'keeper help <command>' for details."
 )]
 struct Cli {
     /// Progress on stderr: auto enables it only on a terminal.
@@ -118,6 +119,14 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CatalogCommand {
+    /// Explicit metadata-only migration to R1; repeat to recover an interrupted migration.
+    #[command(
+        after_help = "Example: keeper catalog migrate /data/photos\nPreserves the original in .keeper/legacy-catalog. No dataset contents are read.\nDo not use older Keeper versions on migrated roots. Back up the entire intent store for history."
+    )]
+    Migrate {
+        #[arg(default_value = ".")]
+        root: PathBuf,
+    },
     /// Export a validated baseline to a new local directory for offline comparison; no rehashing.
     #[command(
         after_help = "Example: keeper catalog export /mnt/DATA2 ~/catalogs/DATA2\nThe destination parent must exist. Existing destinations are never overwritten."
@@ -140,8 +149,51 @@ fn root(path: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
+fn load_standalone(dir: &Path, out: &mut impl Write) -> Result<catalog::Catalog> {
+    if intent::is_revision(dir)? {
+        let revision = intent::read_revision(dir)?;
+        writeln!(
+            out,
+            "Exported intent R{} ({}) at {}",
+            revision.number,
+            revision.checksum,
+            encoding::encode(dir.as_os_str().as_encoded_bytes())
+        )?;
+        Ok(revision.catalog)
+    } else {
+        catalog::read_generation(dir)
+    }
+}
+
+fn load_baseline(root: &Path, out: &mut impl Write) -> Result<catalog::Catalog> {
+    if intent::exists(root)? {
+        let revision = intent::load(root)?;
+        writeln!(
+            out,
+            "Intent R{} ({}) at {}",
+            revision.number,
+            revision.checksum,
+            encoding::encode(root.as_os_str().as_encoded_bytes())
+        )?;
+        Ok(revision.catalog)
+    } else {
+        catalog::load(root)
+    }
+}
+
 fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool) -> Result<u8> {
     match cli.command {
+        Command::Catalog {
+            command: CatalogCommand::Migrate { root: path },
+        } => {
+            let revision = intent::migrate(&root(&path)?)?;
+            writeln!(
+                out,
+                "Migrated baseline to intent R{} ({}). Dataset bytes were not read.\nOriginal retained in .keeper/legacy-catalog. Back up .keeper/intent/ to preserve history.\nDo not use older Keeper builds on this root.",
+                revision.number, revision.checksum
+            )?;
+            Ok(0)
+        }
         Command::Init {
             root: path,
             resume,
@@ -149,7 +201,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
         } => {
             let root = root(&path)?;
             let guard = catalog::InitGuard::lock(&root)?;
-            if guard.catalog_exists()? {
+            if intent::exists(&root)? || guard.catalog_exists()? {
                 let catalog = catalog::load(&root)
                     .context("catalog already exists but could not be read; init never overwrites a baseline")?;
                 writeln!(
@@ -197,7 +249,8 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
         Command::Catalog {
             command: CatalogCommand::Check { root: path },
         } => {
-            let catalog = catalog::load(&root(&path)?)?;
+            let root = root(&path)?;
+            let catalog = load_baseline(&root, out)?;
             writeln!(
                 out,
                 "Catalog OK: {} file(s).\nDataset bytes were not checked.",
@@ -216,8 +269,22 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                     destination,
                 },
         } => {
-            let catalog = catalog::load(&root(&path)?)?;
-            catalog::export(&catalog, &destination)?;
+            let root = root(&path)?;
+            let catalog = if intent::exists(&root)? {
+                let revision = intent::export(&root, &destination)?;
+                writeln!(
+                    out,
+                    "Exported intent R{} ({}) from {}. History and physical observations are not included.",
+                    revision.number,
+                    revision.checksum,
+                    encoding::encode(root.as_os_str().as_encoded_bytes())
+                )?;
+                revision.catalog
+            } else {
+                let catalog = catalog::load(&root)?;
+                catalog::export(&catalog, &destination)?;
+                catalog
+            };
             writeln!(
                 out,
                 "Exported catalog: {} file(s). Dataset bytes were not read.",
@@ -279,8 +346,8 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             }
             let (left_catalog, right_catalog) = if catalogs {
                 (
-                    catalog::read_generation(&left).context("left standalone catalog")?,
-                    catalog::read_generation(&right).context("right standalone catalog")?,
+                    load_standalone(&left, out).context("left standalone catalog")?,
+                    load_standalone(&right, out).context("right standalone catalog")?,
                 )
             } else if live {
                 // Preflight BOTH before hashing either: discover avoidable late
@@ -308,8 +375,8 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
                     .context("right dataset")?;
                 (left_catalog, right_catalog)
             } else {
-                let left_catalog = catalog::load(&left).context("left catalog")?;
-                let right_catalog = catalog::load(&right).context("right catalog")?;
+                let left_catalog = load_baseline(&left, out).context("left catalog")?;
+                let right_catalog = load_baseline(&right, out).context("right catalog")?;
                 (left_catalog, right_catalog)
             };
             Ok(compare::report(
@@ -332,7 +399,7 @@ fn run(cli: Cli, out: &mut impl Write, progress: &mut Progress<'_>, color: bool)
             let _guard = resume
                 .then(|| catalog::InitGuard::lock(&root))
                 .transpose()?;
-            let expected = catalog::load(&root)?;
+            let expected = load_baseline(&root, out)?;
             ensure!(
                 expected.policy == policy::Policy::load(&root)?,
                 ".keeperignore differs from recorded catalog scope; restore the original policy before status (never delete a catalog to change scope)"

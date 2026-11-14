@@ -257,6 +257,9 @@ pub(crate) fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
 }
 
 pub fn load(root: &Path) -> Result<Catalog> {
+    if crate::intent::exists(root)? {
+        return Ok(crate::intent::load(root)?.catalog);
+    }
     read_generation(&metadata_dir(root)?.join("catalog"))
         .context("catalog is invalid; refusing to use it as a baseline")
 }
@@ -277,6 +280,22 @@ pub(crate) fn read_regular(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn read_generation(dir: &Path) -> Result<Catalog> {
+    if crate::intent::is_revision(dir)? {
+        return Ok(crate::intent::read_revision(dir)?.catalog);
+    }
+    read_with_manifest(dir, |text, objects, paths, policy| {
+        ensure!(
+            text == manifest(objects, paths, policy),
+            "unsupported manifest or catalog checksum mismatch"
+        );
+        Ok(())
+    })
+}
+
+pub(crate) fn read_with_manifest(
+    dir: &Path,
+    validate: impl FnOnce(&str, &[u8], &[u8], &Policy) -> Result<()>,
+) -> Result<Catalog> {
     ensure!(
         fs::symlink_metadata(dir)?.is_dir(),
         "catalog must be a real directory"
@@ -298,11 +317,7 @@ pub fn read_generation(dir: &Path) -> Result<Catalog> {
     let manifest = String::from_utf8(read_regular(&dir.join("MANIFEST"))?)?;
     let objects_bytes = read_regular(&dir.join("objects.tsv"))?;
     let paths_bytes = read_regular(&dir.join("paths.tsv"))?;
-    let expected_manifest = self::manifest(&objects_bytes, &paths_bytes, &policy);
-    ensure!(
-        manifest == expected_manifest,
-        "unsupported manifest or catalog checksum mismatch"
-    );
+    validate(&manifest, &objects_bytes, &paths_bytes, &policy)?;
     let paths = std::str::from_utf8(&paths_bytes)?;
     let records = paths
         .strip_prefix(PATHS_HEADER)
