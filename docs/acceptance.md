@@ -1,9 +1,19 @@
-# Tree intent and staggered verification (design draft)
+# Tree intent and staggered verification (design)
 
-**Proposed, not implemented.** This draft records the agreed minimal model and a
-proposed storage/publication protocol. Exact new text schemas and CLI syntax still
-need specification before implementation. Existing commands and format-1/2 files
-are unchanged today; plain `status` remains a full-byte, read-only operation.
+**Partially implemented.** Immutable revision storage, explicit metadata-only
+migration/recovery and exact-parent selective acceptance are implemented; see
+[the concrete schemas, CLI and recovery reference](intent-v1.md). Durable local
+observation logs, coverage reports and selected/resumed passes below remain design,
+not available features. Existing format-1/2 files remain unchanged; plain `status`
+is still a full-byte, read-only operation.
+
+The implemented [everyday CLI](acceptance-cli.md) replaces routine plan/migration
+management with short `add`, `rm`, `update`, `mv`, and `--root`. `snap` records
+named stopping points, optionally accepting a reviewed mixed batch; `snap --mark`
+records only existing expectations. `log` lists history. Saved plans remain an
+advanced workflow. A snapshot preserves expectations, not recoverable file copies;
+ordinary snapshot discovery reads bytes, while a marker makes no live-check claim.
+The storage/authorization model below stays in force underneath this interface.
 
 ## 1. Vocabulary and scope
 
@@ -272,10 +282,10 @@ or changing the committed intent. Never infer a read time from intent publicatio
 
 ## 7. Implementation order and tests
 
-1. Finalize new manifest/reference schemas. Implement immutable revision reading,
-   publication and explicit legacy migration/recovery first, without acceptance.
-2. Add selective acceptance, exact-parent plans and delta-only reads.
-3. Finalize local observation schemas; add durable logging and basic latest-outcome
+1. Done: manifest/reference schemas, immutable revision reading/publication and
+   explicit legacy migration/recovery.
+2. Done: selective acceptance, exact-parent plans and delta-only reads.
+3. Next: finalize local observation schemas; add durable logging and basic latest-outcome
    and coverage reports. Keep existing checkpoint semantics until explicitly changed.
 4. Add resumed selected passes; later add budget/age scheduling if needed.
 

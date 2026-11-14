@@ -25,7 +25,7 @@ Use a dataset directory, not the Keeper source checkout. Stop writers while
 scanning, or use a read-only filesystem snapshot.
 
 ```sh
-K=./target/release/keeper
+K="$PWD/target/release/keeper"
 
 "$K" preflight /path/to/data      # Inspect metadata and report scan problems
 "$K" init /path/to/data           # Read and hash files; create .keeper/catalog/
@@ -93,7 +93,8 @@ for the full procedure, including preparation and later integrity checks.
 Keeper has three distinct sources of information:
 
 - **Live files:** the current contents of a dataset.
-- **Default catalog (`ROOT/.keeper/catalog/`):** the baseline recorded by `init`.
+- **Default baseline:** initially `ROOT/.keeper/catalog/`, recorded by `init`;
+  after acceptance or explicit migration, the active immutable revision in `.keeper/intent/`.
   This is saved checksum information, not an automatically refreshed cache.
 - **Exported catalog:** an independent copy of that baseline elsewhere. Export
   does not inspect current dataset contents or create a fresh observation of them.
@@ -103,7 +104,7 @@ fallback from a missing catalog to hashing files:
 
 | Command | Inputs read |
 | --- | --- |
-| `compare LEFT RIGHT` | Each dataset root's `.keeper/catalog/` only |
+| `compare LEFT RIGHT` | Each dataset root's active baseline metadata only |
 | `compare --catalogs LEFT RIGHT` | The two standalone catalog directories only |
 | `compare --live LEFT RIGHT` | Current files in both trees, freshly hashed |
 | `compare --metadata-only LEFT RIGHT` | Current paths and sizes, not file contents |
@@ -129,12 +130,51 @@ policy, then use `compare --live` if you need to verify current-tree agreement,
 including newly added files. Stop writers during checks. Default `compare` still
 compares the old recorded baselines and cannot reveal subsequent additions.
 
-**Reviewing and accepting a newer baseline is not implemented yet.** The planned
-workflow must let users accept expected additions without automatically accepting
-unexpected changes to old files, preserve prior generations, and revalidate bytes
-before acceptance. Do not delete catalogs and rerun `init` to silence differences;
-that discards the baseline evidence. See the [replica workflow](docs/replica-workflow.md)
-and [acceptance roadmap](docs/roadmap.md#then-explicit-acceptance).
+### Accept expected changes and capture stopping points
+
+Use one command and one confirmation. Stop writers throughout; try disposable
+copies first while filesystem qualification is pending.
+
+```sh
+cd /path/to/data
+"$K" add                 # Accept new files only
+"$K" rm                  # Accept already-deleted files only
+"$K" update edited.jpg   # Approve an intentional edit
+"$K" mv old.jpg new.jpg  # Accept an unchanged file already moved
+```
+
+Short commands discover the nearest enclosing dataset, so from `/photos/2026`,
+`keeper add trip` selects `/photos/2026/trip` using `/photos`'s baseline. Paths are
+relative to your current directory; bare `add`, `rm`, or `snap` stays within its
+subtree. An invalid nearest `.keeper` causes an error, never an ancestor fallback.
+Use `--root /photos` when operating from elsewhere; paths then become root-relative.
+
+`add` and `rm` optionally take files/directory prefixes to narrow their scope.
+They never approve edits to other tracked files. `rm`/`mv` never delete or move
+physical files. Use `--dry-run` to preview, `--long` for individual changes, and
+`--yes` for scripts. Without `--yes`, acceptance requires an interactive terminal.
+
+For a work session, name your stopping points:
+
+```sh
+"$K" snap --mark -m "Before today's session"
+# Import, edit, triage and purge with your normal tools.
+"$K" snap -m "Imports, edits and cleanup finished"
+"$K" log
+```
+
+A regular `snap` reads selected files to discover edits and reviews a mixed batch
+before accepting it as one named snapshot. `snap --mark` names only the current
+expectations without reading or accepting live changes. **Snapshots preserve paths
+and checksums, not file contents: restoring old bytes requires versioned backups.**
+
+History and necessary metadata migration are automatic; the original catalog is
+retained unchanged. **Do not use older Keeper builds after that transition.** Back
+up `.keeper/intent/` for full history and `.keeper/legacy-catalog/` for the original.
+`catalog export` saves only the active expectations, not history or physical evidence.
+See [everyday acceptance](docs/acceptance-cli.md) and [formats/recovery](docs/intent-v1.md).
+Saved plans remain available for advanced review. Never delete catalogs and rerun
+`init` to silence differences.
 
 ## Know the limits
 
@@ -154,6 +194,7 @@ Use `keeper help <command>` for focused help, or consult:
 - [Resumable scans and recovery](docs/resume.md)
 - [Exclusions and scan scope (`.keeperignore`)](docs/ignore.md)
 - [Catalog format and manual inspection](docs/catalog-v1.md), [scoped catalogs](docs/catalog-v2.md)
+- [Selective acceptance and immutable revisions](docs/intent-v1.md)
 - [Development and build checks](docs/development.md)
 - [Design principles](docs/principles.md), [roadmap](docs/roadmap.md), and
   [filesystem qualification](docs/qualification.md)

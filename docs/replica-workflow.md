@@ -94,7 +94,7 @@ useful for ad hoc checks without catalogs; it does not itself persist a baseline
 
 ### Recurring checks on a growing dataset
 
-The baseline is immutable in the current implementation. Rerunning `init`, even
+Each published baseline is immutable; selective acceptance creates a new revision. Rerunning `init`, even
 with `--resume`, validates and summarizes an existing catalog; it does not add new
 files or accept changes. `status` observes current bytes and reports differences
 without updating that baseline. An export is a copy of the recorded baseline,
@@ -110,12 +110,18 @@ For a monthly synchronization check:
 3. With writers stopped, use `compare --live LEFT RIGHT` to verify current paths
    and bytes, including new files. This reads both trees fully and does not save
    a newer baseline. Agreement alone does not prove either copy is healthy.
-4. A future explicit acceptance operation should commit reviewed changes to new
-   baseline generations while preserving history. **This step is not implemented.**
-   Do not delete existing catalogs and reinitialize merely to clear differences.
+4. Accept only intentional changes on each replica: `keeper --root ROOT add` for
+   additions, `rm` for already-deleted files, or `update PATH...` for deliberate
+   edits. Each command confirms once and automatically preserves history/original
+   metadata. For a named mixed session boundary, use `keeper --root ROOT snap -m MESSAGE`;
+   it reads current bytes to discover edits. `snap --mark -m MESSAGE` instead names
+   only existing expectations, with no live check. Agreement is not authorization,
+   and snapshots are not backups of file contents. See [everyday acceptance](acceptance-cli.md)
+   and [recovery](intent-v1.md). Do not delete catalogs to clear differences or use
+   older builds after automatic migration.
 
-Ordinary `compare LEFT RIGHT` reads only the two default catalogs and will not
-see post-baseline additions. Missing or invalid catalogs cause errors, not an
+Ordinary `compare LEFT RIGHT` reads only the two active baselines and will not
+see unaccepted additions. Missing or invalid catalogs cause errors, not an
 implicit live scan. `compare --catalogs LEFT RIGHT` instead reads standalone
 catalog directories; it never resolves or accesses the original dataset roots.
 Use `catalog export ROOT DEST` to save such a directory (destination must be new,

@@ -48,6 +48,16 @@ from the foundation release and check unchanged unscoped serialization. See
 [catalog format 1](catalog-v1.md) and the
 [compatibility commitments](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge).
 
+[Intent formats 1/2](intent-v1.md) add metadata-only migration, selective acceptance
+and named snapshot messages without altering legacy catalogs. `tests/acceptance.rs`
+exercises advanced saved plans; `tests/everyday.rs` covers short commands, automatic
+migration, snapshots/markers, read-only previews and PTY-driven prompt-time races.
+`tests/discovery.rs` covers nearest-dataset boundaries, cwd-relative selectors,
+subtree-only defaults, explicit-root overrides and rejection of corrupt nearest metadata.
+Unit tests inject SIGKILL at storage boundaries (including named snapshots) using switches compiled only
+into the test executable, never the production CLI. Durable observation logs and
+cross-revision selected passes remain future work.
+
 For implementation status, deferred features, and whole-drive readiness gates,
 consult the [roadmap](roadmap.md). The [long-form design](design.md) describes
 architectural direction, not a claim that all proposed features exist.

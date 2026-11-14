@@ -1460,8 +1460,9 @@ different concepts.
 
 Where feasible, provide export into older/simple formats, without disguising a
 lossy export as a migration. See [the compatibility policy](principles.md#5-metadata-evolution-should-preserve-expensive-knowledge).
-Migration tooling is planned, not implemented; the first two milestones share the
-same format-1 tables.
+Explicit metadata-only migration from legacy formats 1/2 to immutable intent R1 is
+implemented; see [intent format and recovery](intent-v1.md). General schema migration
+and lossy older-format export remain future work.
 
 ---
 

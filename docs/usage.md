@@ -5,21 +5,53 @@ drives and checking them later, follow the [replica workflow](replica-workflow.m
 
 ## Commands and roots
 
+This reference lists implemented commands. See [everyday acceptance and snapshots](acceptance-cli.md)
+for simple workflows, confirmation, automatic migration and snapshot semantics.
+Saved plans remain available for advanced review.
+
 | Command | What it checks or records |
 | --- | --- |
+| `add [PATH...]` | Accept new files only; directory selectors are recursive; default: current subtree |
+| `rm [PATH...]` | Accept already-deleted tracked files; never delete physical files |
+| `update PATH...` | Accept deliberate edits to named tracked files only |
+| `mv OLD NEW` | Accept an already-performed file move, requiring unchanged contents |
+| `snap -m MESSAGE [PATH...]` | Read selected files, review mixed changes and record one named snapshot |
+| `snap --mark -m MESSAGE` | Name current expectations without inspecting/accepting live changes |
+| `log` | List snapshots and acceptance history; no dataset bytes read |
 | `preflight [ROOT]` | Metadata-only inventory: file counts, sizes, unsupported objects, and traversal errors |
 | `init [ROOT]` | Physically hash regular files and publish a self-checked initial catalog |
 | `catalog export ROOT DEST` | Save a validated standalone catalog to a new directory; reads no dataset bytes; destination parent must exist |
 | `compare --catalogs LEFT RIGHT` | Compare standalone catalog directories, with no access to the original drives |
-| `catalog check [ROOT]` | Catalog checksums, canonical encoding, and internal consistency; not dataset bytes |
+| `catalog check [ROOT]` | Active baseline checksums, canonical encoding, and internal consistency; not dataset bytes |
+| `catalog migrate [ROOT]` | Explicit metadata-only migration/recovery to immutable intent R1; retains original catalog |
+| `accept plan ROOT PLAN --add PATH` | Save exact-parent review actions; repeat `--add`, `--replace`, or `--remove` |
+| `accept show PLAN` | Inspect saved actions, full hashes and sizes without accessing the dataset |
+| `accept apply ROOT PLAN` | Authorize all reviewed actions, reread selected new bytes, preserve prior revisions |
 | `status [ROOT]` | Physically reread every regular file against the baseline; report added, missing, and changed paths |
 | `compare LEFT RIGHT` | Recorded paths, sizes, and full content IDs in two catalogs |
 | `compare --live LEFT RIGHT` | Current paths and contents, freshly read from both trees without using catalogs |
 | `compare --metadata-only LEFT RIGHT` | Current regular-file paths and sizes, without opening file contents or using catalogs |
 | `help [COMMAND]...` | General or focused help, including nested commands such as `help catalog check` |
 
-`ROOT` defaults to the current directory. Keeper does not search parent directories
-for a catalog. Roots may be explicitly chosen through a symlink; scanning uses the
+Short commands (`add`, `rm`, `update`, `mv`, `snap`, `log`) discover the nearest
+enclosing `.keeper`. Without `--root`, acceptance selectors are relative to the
+current directory; bare `add`, `rm`, or regular `snap` stays within its subtree.
+A corrupt/incomplete nearest marker fails closed, never falling back to an ancestor.
+`--root ROOT` explicitly selects a dataset without changing the working directory:
+selectors then become dataset-relative, and a bare command selects that whole root.
+Relative ROOT values and external paths (plans, exports) remain shell-relative.
+`--root` also works with `init`, `status`, `preflight`, `catalog check`, and
+`catalog migrate`; it conflicts with their positional ROOT argument. Commands with
+mandatory explicit roots (`compare`, `catalog export`, advanced `accept`) retain
+those arguments and reject `--root`. No `-C` alias is currently provided.
+
+Short commands confirm once; `--dry-run` previews without writes, `--yes` authorizes
+noninteractively, and `--long` lists individual actions. `snap` records expectations,
+not file copies.
+
+For legacy commands with optional positional `ROOT` (`init`, `status`, `preflight`,
+`catalog check/migrate`), it still defaults to the current directory without ancestor
+discovery. Roots may be explicitly chosen through a symlink; scanning uses the
 resolved root. Comparison inventory labels retain the supplied path arguments.
 
 `init --resume` and `status --resume` start or continue checkpointed sessions.
@@ -29,12 +61,19 @@ Live comparison has no checkpoint support yet. Root-level [`.keeperignore`](igno
 defines explicit exclusions. Set it before indexing: policies are recorded in
 catalogs and pinned by resumable sessions. No implicit housekeeping exclusions exist.
 
-Preflight runs automatically before hashing. Live comparison preflights both trees
-before hashing either. Standalone preflight does not open regular files, certify
+Full-tree preflight runs automatically before full-tree hashing. Selective acceptance
+checks only selected paths, without requiring a whole-tree inventory; see
+[acceptance and recovery](intent-v1.md).
+
+Live comparison preflights both trees before hashing either. Standalone preflight does not open regular files, certify
 their readability, or test lock, sync, or publication support; hashing can still fail.
 
-No commands accept changed content, copy, repair, or modify dataset files. `init`
-writes the initial catalog, and resumable operations write disposable work state.
+No commands copy, repair, or modify dataset files. `init` writes the initial
+catalog, and resumable operations write disposable work state. Explicit migration
+and selective acceptance write immutable intent metadata. `add`, `rm`, `update`,
+`mv`, `snap` and advanced `accept apply` authorize reviewed expectation changes.
+`snap --mark` records existing expectations without accepting live changes; `log`
+is metadata-only and read-only.
 Catalog export writes only a new destination directory and never replaces an existing path.
 Plain status, preflight, catalog checks, and all comparisons do not write Keeper
 metadata. Reading may cause filesystem access-time updates.
